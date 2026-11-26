@@ -125,7 +125,7 @@ function Workbench() {
   return <AdminPage className="max-w-none gap-3">
     <PageHeader title="客服工作台" />
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <div className="grid h-[calc(100dvh-12rem)] min-h-[32rem] min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface md:grid-cols-[19rem_minmax(0,1fr)]">
+    <div className="grid h-[calc(100dvh-8rem)] min-h-[20rem] min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface md:h-[calc(100dvh-12rem)] md:min-h-[32rem] md:grid-cols-[19rem_minmax(0,1fr)]">
       <aside className={`${selected ? "hidden md:flex" : "flex"} min-h-0 min-w-0 flex-col border-r border-border-subtle`} aria-label="客服对话列表">
         <form className="flex shrink-0 items-center gap-2 border-b border-border-subtle p-3" onSubmit={event => {
           event.preventDefault()

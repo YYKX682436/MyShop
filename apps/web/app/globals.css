@@ -100,7 +100,7 @@
     --space-12: 3rem;
 
     --storefront-max-width: 90rem;
-    --storefront-gutter: max(1rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+    --storefront-gutter: max(0.75rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
     --product-purchase-scroll-margin: calc(5.5rem + env(safe-area-inset-bottom, 0px));
 
     --motion-fast: 140ms;
@@ -406,6 +406,7 @@
 
   .admin-table-region {
     min-width: 0;
+    container: admin-table / inline-size;
     overflow: hidden;
     border: 1px solid hsl(var(--border-subtle));
     border-radius: var(--radius-group);
@@ -418,108 +419,12 @@
   }
 
   .admin-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
     scrollbar-color: hsl(var(--separator-strong)) transparent;
-  }
-
-  .admin-table-scroll > div {
-    overflow: visible;
-  }
-
-  /*
-   * Admin tables stay dense on larger canvases and become readable records on
-   * narrow screens. The transformation is shared here so every list page
-   * keeps the same mobile interaction model without duplicating markup.
-   */
-  @media (max-width: 767px) {
-    .admin-table-scroll {
-      overflow: visible;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) {
-      display: block;
-      width: 100% !important;
-      min-width: 0 !important;
-      table-layout: auto;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > colgroup,
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > thead {
-      display: none;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody {
-      display: grid;
-      gap: 0.75rem;
-      padding: 0.75rem;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) {
-      display: grid;
-      min-width: 0;
-      overflow: hidden;
-      border: 1px solid hsl(var(--border-subtle));
-      border-radius: var(--radius-control);
-      background-color: hsl(var(--surface));
-      box-shadow: var(--shadow-xs);
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td {
-      display: flex;
-      min-width: 0;
-      width: 100%;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 0.75rem;
-      border: 0;
-      border-bottom: 1px solid hsl(var(--separator));
-      padding: 0.75rem 1rem;
-      text-align: right;
-      overflow-wrap: anywhere;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td:last-child {
-      border-bottom: 0;
-      align-items: center;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td::before {
-      flex: 0 0 auto;
-      color: hsl(var(--text-tertiary));
-      content: attr(data-label);
-      font-size: var(--type-caption);
-      font-weight: 600;
-      line-height: 1.35;
-      text-align: left;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td > * {
-      min-width: 0;
-      max-width: 100%;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td:first-child {
-      background-color: hsl(var(--surface-muted) / 0.42);
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td:last-child > * {
-      margin-left: auto;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr.admin-table-state-row {
-      display: block;
-      min-width: 0;
-      border: 0;
-      background: transparent;
-      box-shadow: none;
-    }
-
-    :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr.admin-table-state-row > td.admin-table-state-cell {
-      display: block;
-      width: 100%;
-      border: 0;
-      padding: 2.5rem 1rem;
-      text-align: center;
-    }
+    -webkit-overflow-scrolling: touch;
   }
 
   .admin-workspace {
@@ -625,7 +530,7 @@
     display: flex;
     width: 100%;
     flex-direction: column;
-    gap: clamp(2.5rem, 7vw, 6rem);
+    gap: clamp(1.5rem, 4vw, 3rem);
   }
 
   .store-catalog {
@@ -711,8 +616,8 @@
 
   .product-image-stage--card .product-image-stage-image,
   .product-image-stage--detail .product-image-stage-image {
-    object-fit: cover;
-    object-position: center top;
+    object-fit: contain;
+    object-position: center;
   }
 
   .product-image-stage--upload .product-image-stage-image {
@@ -755,7 +660,7 @@
 
   .storefront-content-width {
     width: min(
-      calc(100vw - var(--storefront-gutter) - var(--storefront-gutter)),
+      calc(100% - var(--storefront-gutter) - var(--storefront-gutter)),
       calc(var(--storefront-max-width) - var(--storefront-gutter) - var(--storefront-gutter))
     );
     margin-inline: auto;
@@ -863,7 +768,7 @@
   .dashboard-primary-grid {
     display: grid;
     min-width: 0;
-    gap: clamp(1.5rem, 3vw, 2.5rem);
+    gap: clamp(0.75rem, 2vw, 1.5rem);
   }
 
   .dashboard-primary-chart,
@@ -872,10 +777,23 @@
     min-width: 0;
   }
 
+  .dashboard-chart-plot {
+    min-width: 0;
+    height: clamp(13rem, 32vh, 22rem);
+    height: clamp(13rem, 32dvh, 22rem);
+  }
+
+  @media (min-width: 640px) {
+    .dashboard-chart-plot {
+      height: clamp(16rem, 32vh, 24rem);
+      height: clamp(16rem, 32dvh, 24rem);
+    }
+  }
+
   .dashboard-detail-grid {
     display: grid;
     min-width: 0;
-    gap: clamp(1.5rem, 3vw, 2.5rem);
+    gap: clamp(0.75rem, 2vw, 1.5rem);
   }
 
   .dashboard-attention-block,
@@ -884,10 +802,70 @@
     min-width: 0;
   }
 
+  .dashboard-priority-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .dashboard-priority-card {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 3.5rem;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.25rem;
+    border: 1px solid hsl(var(--border-subtle));
+    border-radius: var(--radius-control);
+    background: hsl(var(--surface));
+    padding: 0.5rem 0.625rem;
+    box-shadow: var(--shadow-xs);
+  }
+
+  .dashboard-priority-card:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  .dashboard-priority-label {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.375rem;
+    color: hsl(var(--text-secondary));
+    font-size: 0.6875rem;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .dashboard-priority-count {
+    color: hsl(var(--text-primary));
+    font-size: 1.125rem;
+    font-weight: 650;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dashboard-priority-dot {
+    position: absolute;
+    inset-block-start: 0.5rem;
+    inset-inline-end: 0.5rem;
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    background: hsl(var(--destructive));
+  }
+
+  .admin-product-mobile-list,
+  .admin-order-mobile-list,
+  .admin-user-mobile-list,
+  .admin-recharge-mobile-list { display: none; }
+
   .dashboard-attention-grid {
     display: grid;
-    gap: 1.5rem;
-    margin-top: 1.5rem;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
   }
 
   .dashboard-fact {
@@ -929,7 +907,7 @@
     padding-top: 0.75rem;
   }
 
-  @media (min-width: 520px) {
+  @media (min-width: 640px) {
     .dashboard-system-facts > * + * {
       border-top: 0;
       padding-top: 0;
@@ -1013,29 +991,25 @@
     min-width: 0;
   }
 
-  .dashboard-kpi-strip > * + * {
-    border-top: 1px solid hsl(var(--separator));
+  .dashboard-kpi-strip > *:nth-child(even) {
+    border-left: 1px solid hsl(var(--separator));
   }
 
-  @media (min-width: 420px) and (max-width: 1279px) {
-    .dashboard-kpi-strip > * + * {
-      border-top: 0;
-      border-left: 1px solid hsl(var(--separator));
-    }
-
-    .dashboard-kpi-strip > *:nth-child(odd) {
-      border-left: 0;
-    }
-
-    .dashboard-kpi-strip > *:nth-child(n + 3) {
-      border-top: 1px solid hsl(var(--separator));
-    }
+  .dashboard-kpi-strip > *:nth-child(n + 3) {
+    border-top: 1px solid hsl(var(--separator));
   }
 
   @media (min-width: 1280px) {
     .dashboard-kpi-strip > * + * {
-      border-top: 0;
       border-left: 1px solid hsl(var(--separator));
+    }
+
+    .dashboard-kpi-strip > *:nth-child(n + 3) {
+      border-top: 0;
+    }
+
+    .dashboard-kpi-strip > *:nth-child(4n + 1) {
+      border-left: 0;
     }
   }
 
@@ -1242,8 +1216,11 @@
     padding-top: max(1rem, env(safe-area-inset-top, 0px));
     padding-bottom: 1rem;
   }
-  .store-home { gap: 1.25rem; }
+  .store-home { gap: 1rem; }
   .store-catalog { gap: 0.75rem; }
+  .order-filter-bar { overflow-x: auto; flex-wrap: nowrap; overscroll-behavior-inline: contain; scrollbar-width: none; }
+  .order-filter-bar::-webkit-scrollbar { display: none; }
+  .order-filter-bar > * { flex: 0 0 auto; white-space: nowrap; }
   .store-catalog-controls .segmented-control {
     gap: 0.125rem;
     border: 0;
@@ -1262,7 +1239,10 @@
     box-shadow: none;
   }
   .store-catalog-empty { padding-block: 3rem; }
-  .store-product-grid { gap: 1rem 0.625rem; }
+  .store-product-grid { gap: 0.75rem 0.5rem; }
+  .storefront-main .content-surface:not(.p-0) { padding: 0.75rem; }
+  .storefront-main :is(.gap-4, .gap-5, .gap-6) { gap: 0.75rem; }
+  .storefront-main :is(.space-y-4, .space-y-5, .space-y-6) > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
   .product-card {
     height: 100%;
     gap: 0;
@@ -1275,15 +1255,15 @@
     border-radius: 0;
     background: hsl(var(--surface-muted) / 0.6);
   }
-  .product-card-copy { gap: 0.25rem; padding: 0.625rem; }
-  .product-card-title { min-height: 0; font-size: 0.875rem; line-height: 1.4; }
-  .product-card-price { font-size: 1.125rem; line-height: 1.25; }
+  .product-card-copy { gap: 0.25rem; padding: 0.5rem; }
+  .product-card-title { min-height: 0; font-size: 0.875rem; line-height: 1.35; }
+  .product-card-price { font-size: 1rem; line-height: 1.25; }
   .product-image-stage--detail {
     border-radius: 0.875rem;
     background: hsl(var(--surface-muted) / 0.6);
   }
   .product-description-content { padding-block: 0.5rem 1rem; }
-  .account-identity { gap: 0.75rem; }
+  .account-identity { gap: 0.5rem; }
   .account-balance { border-color: hsl(var(--border-subtle)); border-radius: 0.875rem; }
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
@@ -1299,12 +1279,32 @@
   .admin-page-header { gap: 0.75rem; }
   .admin-page-header h1 { font-size: 1.5rem; line-height: 1.25; }
   .admin-page-header p { margin-top: 0.375rem; line-height: 1.4; }
-  .admin-page-toolbar { padding: 0.5rem; }
+  .admin-page-header p { font-size: 0.8125rem; }
+  .admin-page-toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 0.375rem; }
   .admin-page-toolbar :is(input, select, button) { min-height: 2.75rem; }
-  :is(.admin-table-scroll > table, .admin-table-scroll > div > table) > tbody > tr:not(.admin-table-state-row) > td {
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-  }
+  .admin-orders-table .admin-table-scroll > table { display: none; }
+  .admin-orders-table .admin-order-mobile-list { display: grid; }
+  .admin-products-table .admin-table-scroll table { display: none; }
+  .admin-products-table .admin-product-mobile-list { display: grid; }
+  .admin-users-table .admin-table-scroll table { display: none; }
+  .admin-users-table .admin-user-mobile-list { display: grid; }
+  .admin-recharges-table .admin-table-scroll table { display: none; }
+  .admin-recharges-table .admin-recharge-mobile-list { display: grid; }
+  .admin-page .content-surface:not(.p-0) { padding: 0.75rem; }
+  .admin-page :is(.gap-6, .gap-8) { gap: 0.75rem; }
+  .admin-page :is(.space-y-6, .space-y-8) > :not([hidden]) ~ :not([hidden]) { margin-top: 0.75rem; }
+  .admin-page .admin-settings-section { padding: 0.75rem; }
+  .admin-page .settings-section-header { padding-bottom: 0.75rem; }
+  .admin-page .settings-section-content { padding-top: 0.75rem; }
+  .admin-pagination { padding: 0.5rem 0.75rem; }
+  .admin-order-attention-filters { overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: none; padding-block: 0.125rem; }
+  .admin-order-attention-filters::-webkit-scrollbar { display: none; }
+  .admin-order-attention-filters > button { flex: 0 0 auto; }
+  .admin-page-main { padding-inline: 0.75rem; }
+  .dashboard-panel { padding: 0.75rem; }
+  .dashboard-panel-heading { margin-bottom: 0.625rem; }
+  .dashboard-metric { padding: 0.625rem; }
+  .order-list-item { padding-block: 0.75rem; }
 }
 
 @media (pointer: coarse), (any-pointer: coarse) {
@@ -1312,6 +1312,11 @@
     background-color: hsl(var(--material-regular) / 0.96);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+
+  :where(button, select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"]), [role="button"]) {
+    min-block-size: 44px;
+    min-inline-size: 44px;
   }
 }
 
@@ -1321,11 +1326,15 @@
   }
 
   .dashboard-attention-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (min-width: 1280px) {
+  .dashboard-attention-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .dashboard-detail-grid {
     grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.65fr);
   }
@@ -1500,7 +1509,7 @@ dialog.media-manage-dialog::backdrop {
 
 /* Store navigation: the drawing surface includes room for the glass and shadow. */
 .storefront-main--bottom-navigation {
-  padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
 }
 .storefront-main--messages {
   display: flex;
@@ -1635,3 +1644,120 @@ dialog.media-manage-dialog::backdrop {
   .store-liquid-nav[data-mode="fallback"] { border: 1px solid CanvasText; }
   .store-liquid-link[aria-current="page"] { outline: 2px solid Highlight; }
 }
+
+@media (max-width: 767px) {
+  .myshop-dialog,
+  .myshop-alert-dialog {
+    max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top, 0px)) - max(0.75rem, env(safe-area-inset-bottom, 0px)));
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .myshop-dialog:not(.overflow-hidden),
+  .myshop-alert-dialog:not(.overflow-hidden) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .myshop-sheet-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+
+/* Dense management tables keep their headers and scroll inside their own region. */
+@container admin-table (max-width: 720px) {
+  .admin-orders-table table {
+    width: 860px;
+    min-width: 860px;
+    table-layout: fixed;
+  }
+
+  .admin-order-mobile-record { display: grid; min-width: 0; gap: 0.375rem; border-bottom: 1px solid hsl(var(--separator)); padding: 0.625rem 0.75rem; }
+  .admin-order-mobile-record:last-child { border-bottom: 0; }
+  .admin-order-mobile-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .admin-order-mobile-main { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; }
+  .admin-order-mobile-amount { display: flex; flex-direction: column; align-items: flex-end; gap: 0.125rem; white-space: nowrap; }
+  .admin-order-mobile-amount > span { color: hsl(var(--text-tertiary)); font-size: 0.625rem; }
+  .admin-order-mobile-amount > strong { color: hsl(var(--text-primary)); font-size: 0.9375rem; font-weight: 650; }
+  .admin-order-mobile-footer { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; border-top: 1px solid hsl(var(--separator)); padding-top: 0.375rem; }
+  .admin-order-mobile-footer > div:first-child span { overflow-wrap: anywhere; }
+  .admin-order-mobile-state { display: flex; min-height: 5rem; align-items: center; justify-content: center; gap: 0.75rem; padding: 1rem; text-align: center; color: hsl(var(--text-secondary)); }
+
+  .admin-orders-table :is(th, td) { padding-inline: 0.625rem; }
+  .admin-orders-table :is(th, td):nth-child(1) { width: 112px; }
+  .admin-orders-table :is(th, td):nth-child(2) { width: 188px; }
+  .admin-orders-table :is(th, td):nth-child(3) { width: 112px; }
+  .admin-orders-table :is(th, td):nth-child(4) { width: 74px; }
+  .admin-orders-table :is(th, td):nth-child(5) { width: 84px; }
+  .admin-orders-table :is(th, td):nth-child(6) { width: 104px; }
+  .admin-orders-table :is(th, td):nth-child(7) { width: 132px; }
+  .admin-orders-table :is(th, td):nth-child(8) { width: 54px; }
+
+  .admin-products-table table {
+    width: 910px;
+    min-width: 910px;
+    table-layout: fixed;
+  }
+
+  .admin-product-mobile-list { gap: 0.5rem; padding: 0.5rem; }
+  .admin-product-mobile-record { min-width: 0; border: 1px solid hsl(var(--border-subtle)); border-radius: var(--radius-control); background: hsl(var(--surface)); padding: 0.625rem; }
+  .admin-product-mobile-heading { display: flex; min-width: 0; align-items: center; gap: 0.5rem; padding-bottom: 0.5rem; }
+  .admin-product-mobile-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 0.5rem; }
+  .admin-product-mobile-field { display: flex; min-width: 0; min-height: 2.75rem; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0.125rem; border-top: 1px solid hsl(var(--separator)); padding-block: 0.25rem; }
+  .admin-product-mobile-field > span:first-child { color: hsl(var(--text-tertiary)); font-size: 0.625rem; line-height: 1.2; }
+  .admin-product-mobile-field > :last-child { min-width: 0; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+  .admin-product-mobile-field button { max-width: 100%; }
+  .admin-product-mobile-state { display: flex; min-height: 5rem; align-items: center; justify-content: center; gap: 0.75rem; padding: 1rem; text-align: center; color: hsl(var(--text-secondary)); }
+
+  .admin-products-table col:nth-child(1) { width: 240px; }
+  .admin-products-table col:nth-child(2) { width: 120px; }
+  .admin-products-table col:nth-child(3) { width: 90px; }
+  .admin-products-table col:nth-child(4) { width: 100px; }
+  .admin-products-table col:nth-child(5) { width: 80px; }
+  .admin-products-table col:nth-child(6) { width: 90px; }
+  .admin-products-table col:nth-child(7) { width: 90px; }
+  .admin-products-table col:nth-child(8) { width: 100px; }
+
+  .admin-users-table table {
+    width: 865px;
+    min-width: 865px;
+    table-layout: fixed;
+  }
+
+  .admin-users-table :is(th, td):nth-child(1) { width: 70px; }
+  .admin-users-table :is(th, td):nth-child(2) { width: 140px; }
+  .admin-users-table :is(th, td):nth-child(3) { width: 100px; }
+  .admin-users-table :is(th, td):nth-child(4) { width: 85px; }
+  .admin-users-table :is(th, td):nth-child(5) { width: 65px; }
+  .admin-users-table :is(th, td):nth-child(6) { width: 90px; }
+  .admin-users-table :is(th, td):nth-child(7) { width: 80px; }
+  .admin-users-table :is(th, td):nth-child(8) { width: 125px; }
+  .admin-users-table :is(th, td):nth-child(9) { width: 110px; }
+
+  .admin-user-mobile-list { gap: 0; }
+  .admin-user-mobile-record { display: grid; min-width: 0; gap: 0.5rem; border-bottom: 1px solid hsl(var(--separator)); padding: 0.625rem 0.75rem; }
+  .admin-user-mobile-record:last-child { border-bottom: 0; }
+  .admin-user-mobile-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .admin-user-mobile-identity { display: flex; min-width: 0; align-items: center; gap: 0.5rem; }
+  .admin-user-mobile-identity > * { min-width: 0; max-width: 100%; }
+  .admin-user-mobile-metrics { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; border-block: 1px solid hsl(var(--separator)); padding-block: 0.375rem; }
+  .admin-user-mobile-metrics > div { display: flex; min-width: 0; flex-direction: column; gap: 0.125rem; }
+  .admin-user-mobile-metrics dt { color: hsl(var(--text-tertiary)); font-size: 0.625rem; line-height: 1.2; }
+  .admin-user-mobile-metrics dd { min-width: 0; overflow-wrap: anywhere; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+  .admin-user-mobile-metrics button { max-width: 100%; overflow-wrap: anywhere; text-align: left; font-weight: 600; }
+  .admin-user-mobile-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .admin-user-mobile-state,
+  .admin-recharge-mobile-state { display: flex; min-height: 5rem; align-items: center; justify-content: center; gap: 0.75rem; padding: 1rem; text-align: center; color: hsl(var(--text-secondary)); }
+
+  .admin-recharges-table table {
+    width: 700px;
+    min-width: 700px;
+    table-layout: fixed;
+  }
+  .admin-recharge-mobile-list { gap: 0; }
+  .admin-recharge-mobile-record { display: grid; min-width: 0; gap: 0.5rem; border-bottom: 1px solid hsl(var(--separator)); padding: 0.625rem 0.75rem; }
+  .admin-recharge-mobile-record:last-child { border-bottom: 0; }
+  .admin-recharge-mobile-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 0.75rem; }
+  .admin-recharge-mobile-footer { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 0.375rem; border-top: 1px solid hsl(var(--separator)); padding-top: 0.375rem; }
+}
+
+/* Keep one keyboard-scrollable region around table components with their own wrapper. */
+.admin-table-scroll > div { min-width: 0; overflow: visible; }

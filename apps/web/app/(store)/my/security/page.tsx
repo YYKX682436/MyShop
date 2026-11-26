@@ -13,7 +13,7 @@ export default function MySecurityPage() {
   if (!user) return null
 
   return (
-    <div className="account-page max-w-2xl space-y-6">
+    <div className="account-page max-w-2xl space-y-3 sm:space-y-5">
       <header>
         <Link href="/my" className="mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:mb-4">
           <ArrowLeft className="size-4" aria-hidden="true" />

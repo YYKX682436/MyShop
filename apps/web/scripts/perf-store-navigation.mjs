@@ -11,7 +11,7 @@ const browser = await chromium.launch({ headless: true, executablePath, args: ["
 try {
   const results = []
   for (const disabled of [true, false]) {
-    const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 1, hasTouch: true })
+    const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 1, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
     await context.addInitScript(disabled => {
       window.__navDraws = 0
       window.__navLongTasks = []

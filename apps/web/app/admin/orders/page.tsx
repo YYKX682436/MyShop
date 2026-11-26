@@ -188,7 +188,7 @@ export default function AdminOrdersPage() {
     <AdminPage>
       <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
 
-      <div className="-mx-1 max-w-full px-1">
+      <div className="-mx-1 max-w-full overflow-x-auto px-1 pb-1">
         <div className="segmented-control w-max gap-1" role="group" aria-label={t("admin.statusLabel")}>
           {ORDER_STATUS_TABS.map((tab) => (
             <button
@@ -214,7 +214,7 @@ export default function AdminOrdersPage() {
         </div>
       </div>
 
-      <div className="flex max-w-full flex-wrap gap-2" aria-label="待办筛选">
+      <div className="admin-order-attention-filters flex max-w-full gap-2" aria-label="待办筛选">
         {ORDER_ATTENTION_FILTERS.map((filter) => {
           const count = attention[filter.countKey]
           return <button key={filter.value} type="button" aria-pressed={attentionFilter === filter.value}
@@ -227,8 +227,8 @@ export default function AdminOrdersPage() {
       </div>
 
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:flex-wrap">
-          <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Input className="min-w-0 flex-1 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
           <ResponsiveFilters activeCount={Number(timeRange !== "all") + Number(sortDirection !== "desc")}>
           <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
             <option value="all">{t("admin.allTime")}</option>
@@ -251,17 +251,56 @@ export default function AdminOrdersPage() {
         </div>
       </PageToolbar>
 
-      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+      <DataTableShell className="admin-orders-table" footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+        <div className="admin-order-mobile-list" role="list" aria-label={t("admin.dataTable")}>
+          {loading && <div className="admin-order-mobile-state" role="status">{t("common.loading")}</div>}
+          {!loading && error && <div className="admin-order-mobile-state" role="alert"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" size="sm" onClick={() => void loadOrders()}>{t("common.retry")}</Button></div>}
+          {!loading && !error && orders.length === 0 && <div className="admin-order-mobile-state">{t("admin.noOrderData")}</div>}
+          {!loading && !error && orders.map((order) => (
+            <article key={order.id} className="admin-order-mobile-record" role="listitem" aria-label={`${t("admin.orderNo")} ${order.order_no}`}>
+              <header className="admin-order-mobile-heading">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <button type="button" className="min-w-0 truncate text-left font-mono text-xs font-medium text-foreground" title={`${t("admin.orderNo")} ${order.order_no}`} onClick={() => copyOrderNo(order.order_no)}>{order.order_no}</button>
+                  {order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-col items-end gap-0.5">
+                    <OrderStatusBadge status={order.status} items={order.items} />
+                    {order.status === "AFTER_SALE" && order.after_sale?.status === "PENDING" && (
+                      <span className={`text-[10px] font-medium ${order.after_sale.waiting_for === "ADMIN" ? "text-destructive" : "text-muted-foreground"}`}>
+                        {t(getAfterSaleWaitingLabelKey("admin", order.after_sale.waiting_for))}
+                      </span>
+                    )}
+                  </div>
+                  <Button asChild type="button" variant="ghost" size="icon" className="size-9" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}>
+                    <Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link>
+                  </Button>
+                </div>
+              </header>
+              <div className="admin-order-mobile-main">
+                <div className="min-w-0"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></div>
+                <div className="admin-order-mobile-amount"><span>{t("admin.amount")}</span><strong>{formatYuan(order.actual_amount)}</strong></div>
+              </div>
+              <footer className="admin-order-mobile-footer">
+                <CustomerCell order={order} guestLabel={t("admin.guest")} />
+                <div className="min-w-0 text-right">
+                  <time className="block whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(order.created_at, locale)}</time>
+                  <span className="text-[10px] text-muted-foreground">{t("admin.profit")} {formatYuan(order.gross_profit_total)} · {order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span>
+                </div>
+              </footer>
+            </article>
+          ))}
+        </div>
         <table className="w-full min-w-[1180px] text-sm">
           <thead><tr className="border-b border-border-subtle bg-surface-muted">
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.customer")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.profit")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
-            <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.customer")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.profit")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
+            <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
+            <th scope="col" className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
           </tr></thead>
           <tbody>
             {loading && <TableLoadingState colSpan={8} />}
@@ -299,7 +338,7 @@ export default function AdminOrdersPage() {
 function CustomerCell({ order, guestLabel }: { order: AdminOrderItem; guestLabel: string }) {
   const identity = formatAdminOrderCustomer(order, guestLabel)
   return (
-    <div className="flex min-w-[12rem] flex-col">
+    <div className="flex min-w-[7rem] flex-col">
       <span>{identity.primary}</span>
       {identity.secondary && <span className="text-xs text-muted-foreground">{identity.secondary}</span>}
     </div>

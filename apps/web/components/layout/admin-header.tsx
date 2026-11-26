@@ -8,6 +8,7 @@ import {
   Globe2,
   LogOut,
   Moon,
+  Monitor,
   Sun,
 } from "lucide-react"
 
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { useAuth, useLocale, useTheme } from "@/lib/context"
+import { useLayoutPreference } from "@/components/layout/layout-mode"
 import { useAdminAttention } from "@/lib/admin-attention"
 import type { TranslationKey } from "@/lib/i18n"
 
@@ -50,6 +52,7 @@ export function AdminHeader() {
   const router = useRouter()
   const { locale, setLocale, t } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
+  const { mode: layoutMode, setMode: setLayoutMode } = useLayoutPreference()
   const { user, logout } = useAuth()
   const { total: attentionTotal } = useAdminAttention()
   const attentionLabel = attentionTotal > 99 ? "99+" : String(attentionTotal)
@@ -101,6 +104,11 @@ export function AdminHeader() {
             <DropdownMenuItem onClick={toggleTheme}>
               {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
               {resolvedTheme === "dark" ? t("admin.switchToLight") : t("admin.switchToDark")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setLayoutMode(layoutMode === "desktop" ? "auto" : "desktop")}>
+              <Monitor className="h-4 w-4" aria-hidden="true" />
+              {t(layoutMode === "desktop" ? "layout.switchToAuto" : "layout.switchToDesktop")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">

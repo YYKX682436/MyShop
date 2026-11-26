@@ -284,7 +284,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     return <div className="order-detail-loading content-surface mx-auto flex max-w-lg flex-col items-center gap-3 p-8 text-center" role="status"><RefreshCw className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{paymentState.errorMessage || t("common.loading")}</p>{paymentState.errorMessage && retryStatusButton}</div>
   }
 
-  return <div className="order-detail-page mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
+  return <div className="order-detail-page mx-auto flex w-full max-w-4xl flex-col gap-3 py-1 sm:gap-5 sm:py-2">
     <Link href={view.order.guest ? "/" : "/my/orders"} className="inline-flex min-h-11 w-fit items-center text-sm text-muted-foreground hover:text-foreground sm:hidden">← {t("common.back")}</Link>
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">

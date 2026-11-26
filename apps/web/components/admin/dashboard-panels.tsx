@@ -13,6 +13,7 @@ import {
   Gauge,
   HardDrive,
   Loader2,
+  MessageCircle,
   Minus,
   Package,
   Server,
@@ -22,6 +23,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react"
+import Link from "next/link"
 import type { ReactNode } from "react"
 
 import { useLocale } from "@/lib/context"
@@ -137,14 +139,14 @@ function KpiCard({ label, value, icon: Icon, change, helper }: KpiCardProps) {
   const { t } = useLocale()
   const hasChange = change !== undefined
   return (
-    <article className="dashboard-metric min-w-0 p-4 sm:p-5">
+    <article className="dashboard-metric min-w-0 p-2.5 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm text-muted-foreground">{label}</p>
-          <p className="mt-2 truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl">{value}</p>
+          <p className="mt-1 truncate text-xl font-bold tracking-tight text-foreground sm:mt-2 sm:text-3xl">{value}</p>
         </div>
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary">
-          <Icon className="h-5 w-5" aria-hidden="true" />
+        <span className="hidden size-10 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary sm:flex">
+          <Icon className="size-4 sm:size-5" aria-hidden="true" />
         </span>
       </div>
       {(hasChange || helper) && (
@@ -179,7 +181,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   const money = formatYuan
   return (
-    <Stagger className="dashboard-kpi-strip grid grid-cols-1 min-[420px]:grid-cols-2 xl:grid-cols-4">
+    <Stagger className="dashboard-kpi-strip grid grid-cols-2 xl:grid-cols-4">
       <StaggerItem>
         <KpiCard
         label={t("admin.todaySales")}
@@ -213,6 +215,26 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
         />
       </StaggerItem>
     </Stagger>
+  )
+}
+
+export function DashboardPriorityActions({ stats, supportUnread }: { stats: DashboardStats | null; supportUnread: number | null }) {
+  const { locale, t } = useLocale()
+  const items = [
+    { label: t("admin.todoShipShort"), count: stats?.paid_waiting_delivery ?? null, href: "/admin/orders", icon: ClipboardList },
+    { label: t("admin.todoAfterSaleShort"), count: stats?.after_sale_orders ?? null, href: "/admin/orders", icon: Clock3 },
+    { label: t("admin.todoSupportUnread"), count: supportUnread, href: "/admin/support", icon: MessageCircle },
+  ]
+  return (
+    <nav className="dashboard-priority-actions" aria-label={t("admin.needAttention")}>
+      {items.map(({ label, count, href, icon: Icon }) => (
+        <Link key={label} href={href} className="dashboard-priority-card" aria-label={`${label}: ${count === null ? t("admin.dashboardLoading") : count}`}>
+          <span className="dashboard-priority-label"><Icon className="size-3.5 shrink-0 text-primary" aria-hidden="true" />{label}</span>
+          <span className="dashboard-priority-count">{count === null ? "—" : formatNumber(count, locale)}</span>
+          {count !== null && count > 0 && <span className="dashboard-priority-dot" aria-hidden="true" />}
+        </Link>
+      ))}
+    </nav>
   )
 }
 
@@ -435,7 +457,7 @@ export function SystemStatusCard({
       {system && (
         <div className="space-y-4">
           {error && <DashboardInlineError onRetry={onRetry} />}
-          <div className="grid gap-3 min-[520px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
             <ResourceMetric label={t("admin.systemCpu")} icon={Cpu} showCapacity={false} metric={system.cpu ? {
               total_bytes: null,
               used_bytes: null,
@@ -449,12 +471,12 @@ export function SystemStatusCard({
             <ResourceMetric label={t("admin.systemDataDisk")} icon={HardDrive} metric={system.data_disk} />
           </div>
 
-          <div className="dashboard-system-facts grid min-w-0 grid-cols-1 gap-3 bg-surface-muted px-3 py-3 text-sm min-[520px]:grid-cols-2">
+          <div className="dashboard-system-facts grid min-w-0 grid-cols-1 gap-3 bg-surface-muted px-3 py-3 text-sm sm:grid-cols-2">
             <InfoValue label={t("admin.systemUptime")} value={formatUptime(system.uptime_seconds, t)} icon={Clock3} />
             <InfoValue label={t("admin.systemLoad")} value={system.load_1m === null || system.load_1m === undefined ? t("admin.systemNoData") : system.load_1m.toFixed(2)} icon={Gauge} />
-            <div className="col-span-1 min-w-0 min-[520px]:col-span-2">
+            <div className="col-span-1 min-w-0 sm:col-span-2">
               <p className="mb-2 text-xs text-muted-foreground">{t("admin.systemServices")}</p>
-              <div className="grid gap-x-3 gap-y-2 min-[520px]:grid-cols-2">
+              <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
                 <ServiceStatusRow label={t("admin.systemApi")} service={system.services.api} />
                 <ServiceStatusRow label={t("admin.systemWeb")} service={system.services.web} />
                 <ServiceStatusRow label={t("admin.systemDatabase")} service={system.services.database} />

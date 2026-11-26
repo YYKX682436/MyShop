@@ -92,7 +92,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="product-detail-page storefront-content-width flex flex-col gap-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))] lg:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+    <div className="product-detail-page storefront-content-width flex flex-col gap-3 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:gap-5 sm:pb-[calc(6rem+env(safe-area-inset-bottom,0px))] lg:gap-8">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}

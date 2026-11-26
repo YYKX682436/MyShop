@@ -1,14 +1,38 @@
 import assert from "node:assert/strict"
+import { existsSync } from "node:fs"
 import { chromium, webkit } from "playwright"
 
 // Run against an isolated local MyShop instance. This test creates no messages.
 const base = process.env.BASE_URL ?? "http://localhost:3010"
 const engine = process.env.BROWSER_ENGINE === "webkit" ? "webkit" : "chromium"
-const browser = await (engine === "webkit" ? webkit : chromium).launch({ headless: true })
-const context = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true })
+const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+const browser = await (engine === "webkit" ? webkit : chromium).launch({
+  headless: true,
+  executablePath: engine === "webkit" ? undefined : process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? (existsSync(chrome) ? chrome : undefined),
+})
+const context = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
 const page = await context.newPage()
 
 try {
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === "/api/user/profile") {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: 401, message: "unauthorized" }) })
+      return
+    }
+    let data
+    if (path === "/api/support/summary") data = { unread: 0, latest: null }
+    else if (path === "/api/announcements/summary") data = { unread: 0, latest: null }
+    else if (path === "/api/support/general") data = { conversation_id: "fixture-support" }
+    else if (path === "/api/support/conversations/fixture-support/activities") data = { items: [], has_more: false, oldest_cursor: null, newest_cursor: null }
+    else if (path === "/api/support/conversations/fixture-support") data = {
+      id: "fixture-support", site_id: null, site_name: "测试店", customer_name: "访客",
+      order_id: null, order_no: null, order_status: null, latest_at: null, latest_type: null,
+      preview: "", unread: 0, waiting_for: null, needs_attention: false,
+    }
+    else return route.continue()
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, message: "ok", data }) })
+  })
   await page.goto(`${base}/messages`, { waitUntil: "domcontentloaded" })
   const input = page.getByRole("textbox", { name: "消息内容" })
   await input.waitFor()

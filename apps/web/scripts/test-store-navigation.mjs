@@ -26,6 +26,9 @@ let announcementUnread = 0
 let supportUnread = 0
 const backend = createServer((req, res) => {
   const url = new URL(req.url, "http://fixture")
+  if (url.pathname === "/api/user/profile") {
+    res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ code: 401, message: "unauthorized" })); return
+  }
   if (url.pathname.startsWith("/api/uploads/") || url.pathname === "/cors-image.png") {
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" }); res.end(image); return
   }
@@ -69,7 +72,7 @@ try {
   const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? (existsSync(macChrome) ? macChrome : undefined)
   browser = await chromium.launch({ headless: true, executablePath, args: ["--enable-webgl", "--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"] })
-  const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 1, hasTouch: true })
+  const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 1, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
   await context.addInitScript(() => {
     window.__navResources = { textures: 0, framebuffers: 0, draws: 0 }
     const data = Object.getOwnPropertyDescriptor(CharacterData.prototype, "data")
@@ -581,7 +584,7 @@ try {
   // Foreground WebGL follows device DPR; background capture retains its
   // independent 1.5 cap and is delivered at the canvas's final dimensions.
   for (const dpr of [2, 3]) {
-    const retina = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr, hasTouch: true })
+    const retina = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
     const retinaPage = await retina.newPage()
     await retinaPage.route("**/api/**", async route => {
       const url = new URL(route.request().url())
@@ -632,7 +635,7 @@ try {
   assert.equal(await desktopPage.evaluate(() => window.__rightClickPrevented), false, "mouse context menu must remain available")
   await desktop.close()
 
-  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
+  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
   const mobilePage = await mobile.newPage()
   await mobilePage.route("**/api/**", async route => {
     const url = new URL(route.request().url())

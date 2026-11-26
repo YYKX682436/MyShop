@@ -245,9 +245,9 @@ export default function AdminProductsPage() {
       />
 
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Input
-            className="min-w-0 sm:max-w-sm"
+            className="min-w-0 flex-1 sm:max-w-sm"
             value={search}
             onChange={(event) => { setCreatedTarget(null); setSearch(event.target.value); setPage(1) }}
             placeholder={t("admin.searchProduct")}
@@ -298,7 +298,56 @@ export default function AdminProductsPage() {
         )}
       </PageToolbar>
 
-      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={(nextPage) => { setCreatedTarget(null); setPage(nextPage) }} />}>
+      <DataTableShell className="admin-products-table" footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={(nextPage) => { setCreatedTarget(null); setPage(nextPage) }} />}>
+        <div className="admin-product-mobile-list" role="list" aria-label={t("admin.dataTable")}>
+          {loading && <div className="admin-product-mobile-state" role="status">{t("common.loading")}</div>}
+          {!loading && error && <div className="admin-product-mobile-state" role="alert"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>{t("common.retry")}</Button></div>}
+          {!loading && !error && products.length === 0 && <div className="admin-product-mobile-state">{t("admin.noProductData")}</div>}
+          {!loading && !error && products.map((product) => {
+            const unlimited = isUnlimited(product)
+            const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
+            const supplierStockUncertain = product.stock_mode === "SUPPLIER" && Boolean(product.stock_status)
+              && !["AVAILABLE", "OUT_OF_STOCK"].includes(product.stock_status!)
+            const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : supplierStockUncertain ? "text-warning" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-warning" : "text-foreground")
+            return (
+              <article key={product.id} className="admin-product-mobile-record" role="listitem">
+                <header className="admin-product-mobile-heading">
+                  <ProductImagePreviewDialog product={product} />
+                  <div className="min-w-0 flex-1">
+                    <ProductTitleQuickEdit
+                      product={product}
+                      saving={isSaving(product, "title")}
+                      onSave={(title) => runQuickSave(product, "title", () => requestOrThrow(() => adminProductApi.updateTitle(product.id, { title })))}
+                    />
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span className="font-mono">{product.product_no}</span>
+                      <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35" title={t("admin.copyProductNo")} aria-label={`${t("admin.copyProductNo")}: ${product.product_no}`} onClick={() => copyProductNo(product.product_no)}>
+                        <Copy className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                      {lowStock && <span className="inline-flex items-center gap-1 text-warning"><AlertCircle className="size-3" aria-hidden="true" />{t("admin.lowStock")}</span>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button asChild type="button" variant="ghost" size="icon" className="size-9" title={t("admin.editProduct")} aria-label={t("admin.editProduct")}>
+                      <Link href={`/admin/products/${product.id}/edit`}><Edit className="h-4 w-4" aria-hidden="true" /></Link>
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon" className="size-9" title={t("admin.delete")} aria-label={t("admin.delete")} onClick={() => setDeleteProduct(product)}>
+                      <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </header>
+                <div className="admin-product-mobile-fields">
+                  <div className="admin-product-mobile-field"><span>{t("admin.costPriceShort")}</span><ProductPriceQuickEdit product={product} target="cost" saving={isSaving(product, "prices")} onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))} /></div>
+                  <div className="admin-product-mobile-field"><span>{t("admin.retailPriceShort")}</span><ProductPriceQuickEdit product={product} target="retail" saving={isSaving(product, "prices")} onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))} /></div>
+                  <div className="admin-product-mobile-field"><span>{t("admin.stockLabel")}</span><ProductStockQuickAction product={product} className={stockClass} onImported={() => undefined}>{unlimited ? t("admin.unlimited") : supplierStockUncertain ? t(stockNoticeKey(product.stock_status)) : product.stock_available ?? 0}</ProductStockQuickAction></div>
+                  <div className="admin-product-mobile-field"><span>{t("admin.category")}</span><ProductCategoryQuickEdit product={product} categories={categories} categoryName={getCategoryName(product)} saving={isSaving(product, "category")} onSave={(categoryId) => runQuickSave(product, "category", () => requestOrThrow(() => adminProductApi.updateCategory(product.id, { category_id: categoryId })))} /></div>
+                  <div className="admin-product-mobile-field"><span>{t("admin.sortWeight")}</span><ProductWeightQuickEdit product={product} saving={isSaving(product, "sort_weight")} onSave={(weight) => runQuickSave(product, "sort_weight", () => requestOrThrow(() => adminProductApi.updateSortWeight(product.id, weight)), () => patchProduct(product.id, { sort_weight: weight }))} /></div>
+                  <div className="admin-product-mobile-field"><span>{t("admin.statusLabel")}</span><ProductStatusQuickEdit product={product} saving={isSaving(product, "status")} onSave={(enabled) => runQuickSave(product, "status", () => requestOrThrow(() => adminProductApi.setStatus(product.id, enabled)))} /></div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
         <Table className="min-w-[1180px] table-fixed">
           <colgroup>
             <col className="w-[280px]" />

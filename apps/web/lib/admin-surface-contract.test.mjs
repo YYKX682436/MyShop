@@ -7,6 +7,7 @@ const styles = readSource("../app/globals.css")
 const shared = readSource("../components/admin/shared/index.tsx")
 const dashboardPanels = readSource("../components/admin/dashboard-panels.tsx")
 const orders = readSource("../app/admin/orders/page.tsx")
+const products = readSource("../app/admin/products/page.tsx")
 const productForm = readSource("../components/admin/products/product-form.tsx")
 const productTabs = readSource("../components/ui/tabs.tsx")
 const categoryPage = readSource("../app/admin/categories/page.tsx")
@@ -20,20 +21,25 @@ function cssRule(selector) {
   return styles.slice(open + 1, close)
 }
 
-test("admin data tables share a fully enclosed surface and keep mobile record cards and state rows", () => {
+test("admin tables keep accessible scrolling while key lists use purpose-built mobile records", () => {
   const tableRegion = cssRule(".admin-table-region")
   const shell = shared.match(/export function DataTableShell[\s\S]*?\n}/)?.[0]
 
   assert.ok(shell, "DataTableShell remains the shared wrapper")
   assert.match(shell, /admin-table-region/)
   assert.match(shell, /admin-table-scroll/)
+  assert.match(shell, /role="region"/)
+  assert.match(shell, /tabIndex={0}/)
   assert.match(tableRegion, /overflow:\s*hidden/)
   assert.match(tableRegion, /border:\s*1px solid hsl\(var\(--border-subtle\)\)/)
   assert.match(tableRegion, /border-radius:\s*var\(--radius-group\)/)
   assert.match(tableRegion, /background-color:\s*hsl\(var\(--surface\)\)/)
   assert.doesNotMatch(tableRegion, /border-block/)
-  assert.match(styles, /tbody\s*>\s*tr:not\(\.admin-table-state-row\)[\s\S]*?border-radius:\s*var\(--radius-control\)/)
-  assert.match(styles, /tr\.admin-table-state-row/)
+  assert.match(styles, /@container admin-table/)
+  assert.match(orders, /admin-order-mobile-list/)
+  assert.match(products, /admin-product-mobile-list/)
+  assert.match(shared, /admin-table-state-row/)
+  assert.doesNotMatch(styles, /admin-table-scroll[\s\S]{0,800}thead[\s\S]{0,300}display:\s*none/)
 })
 
 test("admin FormSection restores its shared card while retaining utility overrides", () => {
@@ -72,7 +78,8 @@ test("dashboard content groups use tokenized surfaces and one responsive KPI sep
   assert.match(metrics, /border:\s*1px solid hsl\(var\(--border-subtle\)\)/)
   assert.match(metrics, /border-radius:\s*var\(--radius-group\)/)
   assert.doesNotMatch(cssRule(".dashboard-table-region"), /border-block/)
-  assert.match(dashboardPanels, /dashboard-kpi-strip grid grid-cols-1 min-\[420px\]:grid-cols-2 xl:grid-cols-4/)
+  assert.match(dashboardPanels, /dashboard-kpi-strip grid grid-cols-2 xl:grid-cols-4/)
+  assert.doesNotMatch(styles, /admin-table-scroll[^{}]*\{[^}]*display:\s*block/)
   assert.doesNotMatch(dashboardPanels, /dashboard-kpi-strip[^\n]*divide-[xy]/)
 })
 

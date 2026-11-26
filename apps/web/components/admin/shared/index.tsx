@@ -25,7 +25,7 @@ interface AdminPageProps {
 
 export function AdminPage({ children, className }: AdminPageProps) {
   return (
-    <div className={cn("admin-page mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-5 sm:gap-6", className)}>
+    <div className={cn("admin-page mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-3 sm:gap-5 xl:gap-6", className)}>
       {children}
     </div>
   )
@@ -43,7 +43,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, actions, className, onRefresh, refreshing = false, refreshDisabled = false }: PageHeaderProps) {
   return (
-    <header className={cn("admin-page-header flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", className)}>
+    <header className={cn("admin-page-header flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1">
           <h1 className="min-w-0 text-title1 font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
@@ -66,7 +66,7 @@ export function PageRefreshButton({ onRefresh, refreshing = false, disabled = fa
 
 export function PageToolbar({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("admin-page-toolbar static-material toolbar-material flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
+    <div className={cn("admin-page-toolbar static-material toolbar-material flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between", className)}>
       {children}
     </div>
   )
@@ -78,12 +78,13 @@ export function ResponsiveFilters({ children, activeCount = 0 }: { children: Rea
   const id = useId()
   const { t } = useLocale()
   return (
-    <div className="min-w-0 md:contents">
-      <button type="button" className="flex min-h-11 w-full items-center justify-between rounded-control border border-input bg-surface px-3 text-sm font-medium md:hidden" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
-        <span>{t("admin.filters")}{activeCount > 0 ? ` (${activeCount})` : ""}</span>
+    <div className="responsive-filters min-w-0 md:contents">
+      <button type="button" className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-control border border-input bg-surface px-3 text-sm font-medium md:hidden" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+        <span>{t("admin.filters")}</span>
+        {activeCount > 0 && <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary/10 px-1.5 text-xs text-primary">{activeCount}</span>}
         <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
       </button>
-      <div id={id} className={cn("min-w-0 flex-col gap-2 pt-2 md:flex md:flex-row md:items-center md:pt-0", open ? "flex" : "hidden")}>
+      <div id={id} className={cn("responsive-filter-options min-w-0 flex-col gap-2 pt-2 md:flex md:flex-row md:items-center md:pt-0", open ? "flex" : "hidden")}>
         {children}
       </div>
     </div>
@@ -175,12 +176,12 @@ export function AdminPagination({
   const currentPage = Math.min(Math.max(page, 1), totalPages)
 
   return (
-    <div className={cn("flex flex-col gap-3 border-t border-border-subtle bg-surface-muted/45 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between", className)}>
+    <div className={cn("admin-pagination flex flex-col gap-2 border-t border-border-subtle bg-surface-muted/45 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3.5", className)}>
       <span className="text-sm text-muted-foreground">
         {t("admin.totalRecords")} {total} {t("admin.records")}
       </span>
       {totalPages > 1 && (
-        <nav className="flex items-center justify-end gap-1" aria-label={t("admin.pagination")}>
+        <nav className="flex flex-wrap items-center justify-end gap-1" aria-label={t("admin.pagination")}>
           <Button
             type="button"
             variant="outline"

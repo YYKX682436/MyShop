@@ -294,9 +294,9 @@ export default function AdminUsersPage() {
 
       {viewMode === "users" ? <>
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row">
+        <div className="flex min-w-0 flex-1 flex-row items-center gap-2">
           <Input
-            className="min-w-0 sm:max-w-md"
+            className="min-w-0 flex-1 sm:max-w-md"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder={t("admin.searchUser")}
@@ -327,7 +327,52 @@ export default function AdminUsersPage() {
         </div>
       </PageToolbar>
 
-      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+      <DataTableShell className="admin-users-table" footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+        <div className="admin-user-mobile-list" role="list" aria-label={t("admin.users")}>
+          {loading && <div className="admin-user-mobile-state" role="status">{t("common.loading")}</div>}
+          {!loading && error && <div className="admin-user-mobile-state" role="alert"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" size="sm" onClick={() => void loadUsers()}>{t("common.retry")}</Button></div>}
+          {!loading && !error && users.length === 0 && <div className="admin-user-mobile-state">{t("admin.noUserData")}</div>}
+          {!loading && !error && users.map((user) => (
+            <article key={user.id} className="admin-user-mobile-record" role="listitem" aria-label={`${t("admin.userNumber")} ${user.user_no} ${user.username}`}>
+              <header className="admin-user-mobile-heading">
+                <div className="admin-user-mobile-identity">
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">#{user.user_no}</span>
+                  <CopyableValue value={user.username} label={t("admin.usernameLabel")} />
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <UserStatusQuickEdit
+                    username={user.username}
+                    isDeleted={user.is_deleted}
+                    saving={statusSavingId === user.id}
+                    onSave={(next) => toggleStatus(user, next)}
+                  />
+                  <Button asChild type="button" variant="ghost" size="icon" className="size-9" aria-label={t("admin.viewUser")} title={t("admin.viewUser")}>
+                    <Link href={`/admin/users/${user.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link>
+                  </Button>
+                </div>
+              </header>
+              <dl className="admin-user-mobile-metrics">
+                <div>
+                  <dt>{t("admin.balanceLabel")}</dt>
+                  <dd><button type="button" onClick={() => openBalance(user)} aria-label={`${t("admin.adjustBalance")}: ${user.username}`}>{formatYuanValue(user.balance)}</button></dd>
+                </div>
+                <div><dt>{t("admin.orderCount")}</dt><dd>{user.order_count}</dd></div>
+                <div><dt>{t("admin.totalSpent")}</dt><dd>{formatYuanValue(user.total_spent)}</dd></div>
+              </dl>
+              <footer className="admin-user-mobile-footer">
+                <UserLevelQuickEdit
+                  username={user.username}
+                  value={user.user_level_id}
+                  label={user.user_level_name || t("admin.systemNoData")}
+                  levels={levels}
+                  saving={levelSavingId === user.id}
+                  onSave={(levelId) => changeLevel(user, levelId)}
+                />
+                <time className="min-w-0 truncate text-right text-xs text-muted-foreground" title={formatDateTime(user.created_at, locale)}>{formatDateTime(user.created_at, locale)}</time>
+              </footer>
+            </article>
+          ))}
+        </div>
         <table className="w-full min-w-[1040px] text-sm">
           <thead>
             <tr className="border-b border-border-subtle bg-surface-muted">
@@ -391,16 +436,41 @@ export default function AdminUsersPage() {
         </table>
       </DataTableShell>
       </> : <section className="space-y-4">
-        <form action="/admin/users/recharges" method="get" onSubmit={submitRechargeFilters} className="grid gap-3 rounded-card border border-border-subtle bg-surface p-4 sm:grid-cols-2 xl:grid-cols-6">
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground xl:col-span-2"><span>{t("admin.rechargeKeyword")}</span><Input type="search" name="keyword" value={rechargeKeyword} onChange={(event) => setRechargeKeyword(event.target.value)} /></label>
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeStatus")}</span><select name="status" className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground" value={rechargeStatus} onChange={(event) => setRechargeStatus(event.target.value)}><option value="">{t("admin.allStatus")}</option><option value="PENDING">PENDING</option><option value="PAID">PAID</option><option value="RECOVERED">RECOVERED</option><option value="FAILED">FAILED</option><option value="CLOSED">CLOSED</option></select></label>
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeChannel")}</span><select name="channel_code" className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground" value={rechargeChannel} onChange={(event) => setRechargeChannel(event.target.value)}><option value="">{t("admin.allStatus")}</option>{rechargeChannels.map((channel) => <option key={channel.channel_code} value={channel.channel_code}>{channel.channel_name} · {channel.channel_code}</option>)}</select></label>
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMin")}</span><Input type="number" min="0" step="0.01" name="min_amount" value={rechargeMin} onChange={(event) => setRechargeMin(event.target.value)} /></label>
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMax")}</span><Input type="number" min="0" step="0.01" name="max_amount" value={rechargeMax} onChange={(event) => setRechargeMax(event.target.value)} /></label>
-          <div className="flex items-end sm:col-span-2 xl:col-span-6"><Button type="submit" variant="outline" disabled={rechargeLoading}>{t("nav.search")}</Button></div>
+        <form action="/admin/users/recharges" method="get" onSubmit={submitRechargeFilters} className="rounded-card border border-border-subtle bg-surface p-2 sm:p-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Input className="min-w-0 flex-1" type="search" name="keyword" value={rechargeKeyword} onChange={(event) => setRechargeKeyword(event.target.value)} placeholder={t("admin.rechargeKeyword")} aria-label={t("admin.rechargeKeyword")} />
+            <select name="status" className="h-11 min-w-0 max-w-32 rounded-control border border-input bg-surface px-2 text-sm text-foreground" value={rechargeStatus} onChange={(event) => setRechargeStatus(event.target.value)} aria-label={t("admin.rechargeStatus")}><option value="">{t("admin.allStatus")}</option><option value="PENDING">PENDING</option><option value="PAID">PAID</option><option value="RECOVERED">RECOVERED</option><option value="FAILED">FAILED</option><option value="CLOSED">CLOSED</option></select>
+            <Button type="submit" variant="outline" size="sm" className="h-11 shrink-0 px-3" disabled={rechargeLoading}>{t("nav.search")}</Button>
+            <ResponsiveFilters activeCount={Number(Boolean(rechargeChannel)) + Number(Boolean(rechargeMin)) + Number(Boolean(rechargeMax))}>
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeChannel")}</span><select name="channel_code" aria-label={t("admin.rechargeChannel")} className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground" value={rechargeChannel} onChange={(event) => setRechargeChannel(event.target.value)}><option value="">{t("admin.allStatus")}</option>{rechargeChannels.map((channel) => <option key={channel.channel_code} value={channel.channel_code}>{channel.channel_name} · {channel.channel_code}</option>)}</select></label>
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMin")}</span><Input type="number" min="0" step="0.01" name="min_amount" aria-label={t("admin.rechargeMin")} value={rechargeMin} onChange={(event) => setRechargeMin(event.target.value)} /></label>
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMax")}</span><Input type="number" min="0" step="0.01" name="max_amount" aria-label={t("admin.rechargeMax")} value={rechargeMax} onChange={(event) => setRechargeMax(event.target.value)} /></label>
+            </ResponsiveFilters>
+          </div>
         </form>
 
-        <DataTableShell footer={<AdminPagination page={rechargePage} total={rechargeTotal} pageSize={PAGE_SIZE} onPageChange={setRechargePage} />}>
+        <DataTableShell className="admin-recharges-table" footer={<AdminPagination page={rechargePage} total={rechargeTotal} pageSize={PAGE_SIZE} onPageChange={setRechargePage} />}>
+          <div className="admin-recharge-mobile-list" role="list" aria-label={t("admin.rechargeRecords")}>
+            {rechargeLoading && <div className="admin-recharge-mobile-state" role="status">{t("common.loading")}</div>}
+            {!rechargeLoading && rechargeError && <div className="admin-recharge-mobile-state" role="alert"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" size="sm" onClick={() => void loadRecharges()}>{t("common.retry")}</Button></div>}
+            {!rechargeLoading && !rechargeError && rechargeRecords.length === 0 && <div className="admin-recharge-mobile-state">{t("admin.rechargeNoRecords")}</div>}
+            {!rechargeLoading && !rechargeError && rechargeRecords.map((record) => (
+              <article key={record.id} className="admin-recharge-mobile-record" role="listitem" aria-label={`${t("admin.rechargeRecords")} ${record.username}`}>
+                <header className="admin-recharge-mobile-heading">
+                  <div className="min-w-0">
+                    <Link href={`/admin/users/${record.user_id}`} className="block truncate font-medium text-foreground hover:text-primary">{record.username}</Link>
+                    <span className="block truncate text-xs text-muted-foreground">{record.user_no == null ? record.email : `#${record.user_no}`}</span>
+                  </div>
+                  <strong className="shrink-0 text-sm tabular-nums">{formatYuanValue(record.amount)}</strong>
+                </header>
+                <footer className="admin-recharge-mobile-footer">
+                  <span className="min-w-0 truncate">{record.channel_name || record.channel_code || "—"}</span>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${record.business_status === "RECOVERED" || record.payment_status === "PAID" ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-border-subtle bg-surface-muted text-muted-foreground"}`}>{record.business_status === "RECOVERED" ? "RECOVERED" : record.payment_status}</span>
+                  <time className="min-w-0 truncate text-right text-xs text-muted-foreground" title={formatDateTime(record.created_at, locale)}>{formatDateTime(record.created_at, locale)}</time>
+                </footer>
+              </article>
+            ))}
+          </div>
           <table className="w-full min-w-[1050px] text-sm">
             <caption className="sr-only">{t("admin.rechargeRecords")}</caption>
             <thead><tr className="border-b border-border-subtle bg-surface-muted">

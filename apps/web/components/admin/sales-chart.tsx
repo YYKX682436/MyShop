@@ -36,7 +36,7 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
           {t("admin.noSalesTrendData")}
         </div>
       ) : (
-        <div className="min-h-64 flex-1 sm:min-h-72">
+        <div className="dashboard-chart-plot">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
             <defs>

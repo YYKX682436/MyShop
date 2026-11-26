@@ -49,7 +49,7 @@ try {
   const results = []
   for (const scenario of [{ name: "standard", stubTurnstile: false }, { name: "long", stubTurnstile: true }]) {
     for (let run = 1; run <= (process.env.PURCHASE_TRACE === "1" ? 1 : 3); run++) {
-      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true })
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
       await context.route("https://challenges.cloudflare.com/**", route => route.fulfill({ contentType: "application/javascript", body: `window.turnstile={render(el){el.textContent='Turnstile fixture';return 'fixture'},reset(){},remove(){}}` }))
       await context.route("**/api/**", async route => {
         const path = new URL(route.request().url()).pathname

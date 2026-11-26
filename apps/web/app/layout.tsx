@@ -1,14 +1,22 @@
 import React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Toaster } from "sonner"
 import { AppProviders } from "@/lib/context"
 import { MotionProvider } from "@/components/ui/motion"
 import { ThemeScript } from "./theme-script"
+import { LayoutModeScript } from "./layout-mode-script"
+import { LayoutModeController } from "@/components/layout/layout-mode"
 import { requestSiteUrl } from "@/lib/request-site"
 import { getSiteConfig } from "@/services/api-server"
 import "./globals.css"
 
 export const dynamic = "force-dynamic"
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+}
 
 export async function generateMetadata(): Promise<Metadata> {
   const [siteUrl, config] = await Promise.all([requestSiteUrl(), getSiteConfig().catch(() => null)])
@@ -42,12 +50,14 @@ export default function RootLayout({
     <html lang="zh" suppressHydrationWarning>
       <head>
         <ThemeScript />
+        <LayoutModeScript />
       </head>
       <body className="font-sans antialiased" suppressHydrationWarning>
         <MotionProvider>
           <AppProviders>
             {children}
             <Toaster position="top-center" richColors closeButton />
+            <LayoutModeController />
           </AppProviders>
         </MotionProvider>
       </body>

@@ -56,7 +56,7 @@ try {
   }
   const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   browser = await chromium.launch({ headless: true, executablePath: existsSync(chrome) ? chrome : undefined })
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
   page.setDefaultTimeout(8000)
   let payload = null
   let admin = false, refreshed = 0, paymentReview = null

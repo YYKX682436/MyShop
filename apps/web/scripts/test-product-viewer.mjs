@@ -86,7 +86,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true, executablePath })
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true })
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36" })
   await context.addInitScript(() => {
     const NativeWatcher = window.CloseWatcher
     if (NativeWatcher) window.CloseWatcher = class extends NativeWatcher {
@@ -107,6 +107,10 @@ try {
   })
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url())
+    if (url.pathname === "/api/user/profile") {
+      await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: 401, message: "unauthorized" }) })
+      return
+    }
     if (url.pathname.startsWith("/api/uploads/")) {
       const data = images[url.pathname.split("/").at(-1)]
       await route.fulfill(failOriginal || !data ? { status: 404, body: "missing" } : { status: 200, contentType: "image/png", body: data })
@@ -158,13 +162,13 @@ try {
     await page.waitForTimeout(700)
     console.log("CARD_DEBUG", await page.evaluate(() => { const img = document.querySelector(".product-image-stage--card img"); return { img: img?.outerHTML, style: img && getComputedStyle(img).objectFit, body: document.body.innerText.slice(0, 300), html: document.body.innerHTML.slice(0, 500), styles: document.styleSheets.length } }))
   }
-  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--card img"); return img && getComputedStyle(img).objectFit === "cover" }, null, { timeout: 8000 })
+  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--card img"); return img && getComputedStyle(img).objectFit === "contain" }, null, { timeout: 8000 })
   const cardStyle = await page.evaluate(() => { const style = getComputedStyle(document.querySelector(".product-image-stage--card img")); return [style.objectFit, style.objectPosition] })
   await navigate("square")
-  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--detail img"); return img && getComputedStyle(img).objectFit === "cover" })
+  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--detail img"); return img && getComputedStyle(img).objectFit === "contain" })
   const detailStyle = await page.evaluate(() => { const style = getComputedStyle(document.querySelector(".product-image-stage--detail img")); return [style.objectFit, style.objectPosition] })
   assert.deepEqual(detailStyle, cardStyle, "home and detail preview cropping must match")
-  assert.deepEqual(detailStyle, ["cover", "50% 0%"])
+  assert.deepEqual(detailStyle, ["contain", "50% 50%"])
   originals.length = 0
   await page.reload({ waitUntil: "domcontentloaded" })
   await imageButton().waitFor()

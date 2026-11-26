@@ -113,6 +113,9 @@ async function fixture({ id = "standard", width = 390, height = 844, theme = "li
   await context.route("https://challenges.cloudflare.com/**", route => route.fulfill({ contentType: "application/javascript", body: `window.__turnstileRenders=0;window.turnstile={render(el,o){window.__turnstileRenders++;el.textContent='Turnstile fixture';o.callback('fixture-token');return 'widget'},reset(){},remove(){}}` }))
   await context.route("**/api/**", async route => {
     const req = route.request(), path = new URL(req.url()).pathname
+    if (path === "/api/user/profile" && !profile) {
+      return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: 401, message: "unauthorized" }) })
+    }
     if (path === "/api/orders" && req.method() === "POST") {
       requests.push(req.postDataJSON())
       requestHeaders.push(req.headers())

@@ -10,6 +10,7 @@ import {
   DashboardInlineError,
   DashboardKpiCards,
   DashboardPanelState,
+  DashboardPriorityActions,
   InventoryHealthCard,
   LowStockPanel,
   OrderHealthCard,
@@ -40,7 +41,7 @@ const initialState = <T,>(): AsyncState<T> => ({ data: null, loading: true, erro
 
 export default function AdminDashboardPage() {
   const { locale, t } = useLocale()
-  const { refresh: refreshAttention } = useAdminAttention()
+  const { refresh: refreshAttention, summary: attentionSummary, loading: attentionLoading } = useAdminAttention()
   const productRevision = useAdminDataRevision("products")
   const orderRevision = useAdminOrderInvalidation()
   const lastBusinessRevision = useRef({ productRevision, orderRevision })
@@ -184,7 +185,7 @@ export default function AdminDashboardPage() {
   const updatedText = lastUpdated ? formatDateTime(lastUpdated.toISOString(), locale) : t("admin.dashboardLoading")
 
   return (
-    <AdminPage className="gap-5 sm:gap-6">
+    <AdminPage>
       <PageHeader
         title={t("admin.dashboard")}
         description={t("admin.welcome")}
@@ -195,6 +196,11 @@ export default function AdminDashboardPage() {
             <p className="hidden truncate text-xs text-muted-foreground sm:block">{t("admin.dashboardLastUpdated").replace("{time}", updatedText)}</p>
           </div>
         }
+      />
+
+      <DashboardPriorityActions
+        stats={stats.data}
+        supportUnread={attentionLoading ? null : attentionSummary.support_unread}
       />
 
       <section className="dashboard-kpi-block" aria-label={t("admin.businessOverview")}>
@@ -208,6 +214,17 @@ export default function AdminDashboardPage() {
           <DashboardRegion title={t("admin.businessOverview")}>
             <DashboardPanelState loading={stats.loading} onRetry={() => void loadBusiness()} />
           </DashboardRegion>
+        )}
+      </section>
+
+      <section className="dashboard-attention-block" aria-label={t("admin.needAttention")}>
+        <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
+        {stats.data && (
+          <div className="dashboard-attention-grid">
+            <OrderHealthCard stats={stats.data} />
+            <InventoryHealthCard stats={stats.data} />
+            <LowStockPanel products={stats.data.low_stock_products} />
+          </div>
         )}
       </section>
 
@@ -232,17 +249,6 @@ export default function AdminDashboardPage() {
             onRetry={() => void loadSystem()}
           />
         </div>
-      </section>
-
-      <section className="dashboard-attention-block" aria-label={t("admin.needAttention")}>
-        <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
-        {stats.data && (
-          <div className="dashboard-attention-grid">
-            <OrderHealthCard stats={stats.data} />
-            <InventoryHealthCard stats={stats.data} />
-            <LowStockPanel products={stats.data.low_stock_products} />
-          </div>
-        )}
       </section>
 
       <section className="dashboard-detail-grid" aria-label={t("admin.recentOrders")}>

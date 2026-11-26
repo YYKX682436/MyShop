@@ -4,6 +4,7 @@ export {
   DashboardInlineError,
   DashboardKpiCards,
   DashboardPanelState,
+  DashboardPriorityActions,
   InventoryHealthCard,
   LowStockPanel,
   OrderHealthCard,

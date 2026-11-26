@@ -75,7 +75,7 @@ export default function MyOrdersPage() {
 
   if (!authLoaded) {
     return (
-      <div className="order-history-page space-y-6">
+      <div className="order-history-page space-y-3 sm:space-y-5">
         <div>
           <div className="h-8 w-32 animate-pulse rounded bg-foreground/[0.07]" />
         </div>
@@ -88,12 +88,12 @@ export default function MyOrdersPage() {
 
   if (!isLoggedIn || !user) {
     return (
-      <div className="order-history-page space-y-6">
+      <div className="order-history-page space-y-3 sm:space-y-5">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
         </div>
 
-        <section className="rounded-card border border-border-subtle bg-surface p-8 text-center sm:p-12" aria-label={t("myOrders.title")}>
+        <section className="rounded-card border border-border-subtle bg-surface p-4 text-center sm:p-12" aria-label={t("myOrders.title")}>
           <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-foreground/[0.05] text-muted-foreground sm:size-16">
             <Package className="size-7 sm:size-8" strokeWidth={1.75} aria-hidden="true" />
           </div>
@@ -124,7 +124,7 @@ export default function MyOrdersPage() {
   }
 
   return (
-    <div className="order-history-page space-y-6">
+    <div className="order-history-page space-y-3 sm:space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
       </div>

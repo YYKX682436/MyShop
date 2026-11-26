@@ -517,6 +517,10 @@ const zh = {
   "admin.loadError": "加载失败，请重试",
   "admin.pagination": "分页导航",
   "admin.goToPage": "前往第 {page} 页",
+  "layout.desktop": "电脑排版",
+  "layout.auto": "自动排版",
+  "layout.switchToDesktop": "切换到电脑排版",
+  "layout.switchToAuto": "恢复自动排版",
 
   // Admin Dashboard
   "admin.dashboardLastUpdated": "上次更新：{time}",
@@ -526,6 +530,9 @@ const zh = {
   "admin.dashboardLoading": "正在加载...",
   "admin.loadFailedRetry": "加载失败，点击重试",
   "admin.needAttention": "需要处理",
+  "admin.todoShipShort": "待发货",
+  "admin.todoAfterSaleShort": "待售后",
+  "admin.todoSupportUnread": "未读客服",
   "admin.systemHealthy": "系统运行正常",
   "admin.noPendingIssues": "暂无待处理异常",
   "admin.monitorUnavailable": "监控暂不可用",
@@ -1978,6 +1985,10 @@ const en: Record<keyof typeof zh, string> = {
   "admin.loadError": "Load failed. Please try again.",
   "admin.pagination": "Pagination",
   "admin.goToPage": "Go to page {page}",
+  "layout.desktop": "Desktop layout",
+  "layout.auto": "Automatic layout",
+  "layout.switchToDesktop": "Switch to desktop layout",
+  "layout.switchToAuto": "Restore automatic layout",
 
   // Admin Dashboard
   "admin.dashboardLastUpdated": "Last updated: {time}",
@@ -1987,6 +1998,9 @@ const en: Record<keyof typeof zh, string> = {
   "admin.dashboardLoading": "Loading...",
   "admin.loadFailedRetry": "Load failed, click to retry",
   "admin.needAttention": "Needs attention",
+  "admin.todoShipShort": "To ship",
+  "admin.todoAfterSaleShort": "After-sales",
+  "admin.todoSupportUnread": "Unread support",
   "admin.systemHealthy": "System healthy",
   "admin.noPendingIssues": "No pending issues",
   "admin.monitorUnavailable": "Monitoring unavailable",
