@@ -450,11 +450,12 @@ class SupportPostgresIntegrationTest {
 
     private UUID insertAttentionOrderItem(UUID order, UUID product, String delivery, String stockMode, String fulfillment) {
         UUID item = UUID.randomUUID();
+        Long productNo=jdbc.queryForObject("SELECT product_no FROM products WHERE id=?",Long.class,product);
         jdbc.update("""
-                INSERT INTO order_items(id,order_id,product_id,product_title,quantity,unit_price,subtotal,delivery_type,
+                INSERT INTO order_items(id,order_id,product_id,product_no,product_title,quantity,unit_price,subtotal,delivery_type,
                   stock_mode,fulfillment_status,cost_price_snapshot,retail_price_snapshot,pricing_source)
-                VALUES (?,?,?, 'Attention fixture',1,1,1,?,?,?,1,1,'RETAIL')
-                """, item,order,product,delivery,stockMode,fulfillment);
+                VALUES (?,?,?,?,'Attention fixture',1,1,1,?,?,?,1,1,'RETAIL')
+                """, item,order,product,productNo,delivery,stockMode,fulfillment);
         return item;
     }
 
