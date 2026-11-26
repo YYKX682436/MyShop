@@ -21,10 +21,10 @@ test("product cards stay limited to image, title, price, and a light sold-out st
   assert.doesNotMatch(source, /<span[^>]+product\.buyNow|t\("product\.buyNow"\)/)
 })
 
-test("home begins with catalog and preview stages crop without stretching", () => {
+test("home begins with catalog and preview stages preserve the image without cropping", () => {
   assert.doesNotMatch(homeSource, /store-home-hero|siteSlogan|siteDescription|siteName/)
   assert.match(homeSource, /<section className="store-catalog"/)
-  assert.match(styles, /\.product-image-stage--card \.product-image-stage-image,[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center top;/)
+  assert.match(styles, /\.product-image-stage--card \.product-image-stage-image,[\s\S]*?object-fit:\s*contain;[\s\S]*?object-position:\s*center;/)
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*?\.product-image-stage--detail\s*\{[^}]*aspect-ratio:\s*4\s*\/\s*5;/)
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?\.product-detail-layout\s*\{[^}]*grid-template-columns:\s*clamp\(110px, 34vw, 145px\)/)
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*?\.product-card\s*\{[^}]*border:\s*1px solid/)
