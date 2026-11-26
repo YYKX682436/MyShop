@@ -466,10 +466,10 @@ class SupportPostgresIntegrationTest {
     private void insertAttentionMapping(UUID account, UUID product, String remote, String error,
                                         LocalDateTime lastSynced, LocalDateTime lastAttempt) {
         jdbc.update("""
-                INSERT INTO supplier_product_mappings(account_id,remote_goods_id,remote_sku,product_id,goods_type,sku_type,
+                INSERT INTO supplier_product_mappings(id,account_id,remote_goods_id,remote_sku,product_id,goods_type,sku_type,
                   cost,stock,goods_status,sku_status,multiple,min_quantity,max_quantity,snapshot,last_synced_at,last_attempt_at,sync_error)
-                VALUES (?,?, '', ?,1,1,0,0,1,1,1,0,0,'{}'::jsonb,?,?,?)
-                """,account,remote,product,lastSynced,lastAttempt,error);
+                VALUES (?,?,?,'', ?,1,1,0,0,1,1,1,0,0,'{}'::jsonb,?,?,?)
+                """,UUID.randomUUID(),account,remote,product,lastSynced,lastAttempt,error);
     }
 
     private void assertAttentionFilter(String filter, UUID expectedOrder) {
