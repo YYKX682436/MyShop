@@ -300,7 +300,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  refreshProfileRef.current = refreshProfile
+  useEffect(() => { refreshProfileRef.current = refreshProfile }, [refreshProfile])
 
   useEffect(() => {
     const refreshWhenVisible = () => {

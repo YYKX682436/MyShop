@@ -70,7 +70,6 @@ export function AdminAttentionProvider({ children }: { children: ReactNode }) {
   const identityRef = useRef(identity)
   const sequence = useRef(0)
   const inFlight = useRef<{ identity: string; promise: Promise<boolean> } | null>(null)
-  identityRef.current = identity
 
   useEffect(() => {
     const unsubscribe = subscribe(() => setInvalidationRevision(current => current + 1))
@@ -78,6 +77,7 @@ export function AdminAttentionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    identityRef.current = identity
     sequence.current += 1
     inFlight.current = null
     setStoredSummary({ identity, data: EMPTY_SUMMARY })

@@ -443,7 +443,7 @@ class SupportPostgresIntegrationTest {
 
     private UUID insertAttentionProduct(UUID category, String title, String stockMode, boolean enabled, int threshold) {
         UUID product = UUID.randomUUID();
-        jdbc.update("INSERT INTO products(id,title,base_price,category_id,stock_mode,is_enabled,low_stock_threshold) VALUES (?,?,1,?,?,?,?)",
+        jdbc.update("INSERT INTO products(id,title,retail_price,cost_price,category_id,stock_mode,is_enabled,low_stock_threshold) VALUES (?,?,1,1,?,?,?,?)",
                 product,title,category,stockMode,enabled,threshold);
         return product;
     }

@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { SupplierPicker, type SupplierSelection } from "@/components/admin/suppliers/supplier-picker"
-import { useAuth } from "@/lib/context"
 import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { adminCategoryApi, adminProductApi, adminSupplierApi, type SupplierAccount, type SupplierAccountInput, type SupplierCategory, type SupplierMapping, type SupplierProduct, type SupplierSummary } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
@@ -52,7 +51,6 @@ function flatten<T extends { id: string; name: string; children?: T[] }>(items: 
 }
 
 export default function SuppliersPage() {
-  const { user } = useAuth()
   const [accounts, setAccounts] = useState<SupplierAccount[]>([])
   const [selected, setSelected] = useState("")
   const selectedRef = useRef("")

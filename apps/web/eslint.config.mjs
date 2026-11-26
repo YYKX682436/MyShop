@@ -5,7 +5,7 @@ import nextTs from "eslint-config-next/typescript"
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "lib/vendor/liquid-glass/**"]),
   {
     rules: {
       // The existing UI intentionally performs browser/API synchronization in

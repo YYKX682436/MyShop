@@ -114,7 +114,7 @@ class AuthSessionPostgresIntegrationTest {
         AuthSessionService.Resolution resolved = service.resolve(issued.value(), requestWith(issued.value()), renewalResponse);
 
         assertTrue(resolved.authenticated());
-        assertEquals(365, jdbc.queryForObject("SELECT (expires_at>CURRENT_TIMESTAMP+INTERVAL '364 days')::int FROM auth_sessions WHERE token_hash=?", Integer.class, digest));
+        assertEquals(1, jdbc.queryForObject("SELECT (expires_at>CURRENT_TIMESTAMP+INTERVAL '364 days')::int FROM auth_sessions WHERE token_hash=?", Integer.class, digest));
         assertTrue(renewalResponse.getHeaders("Set-Cookie").stream().anyMatch(value -> value.contains("Max-Age=31536000")));
         assertTrue(renewalResponse.getHeaders("Set-Cookie").stream().anyMatch(value -> value.contains("HttpOnly")));
 
@@ -259,7 +259,7 @@ class AuthSessionPostgresIntegrationTest {
 
         assertTrue(sessions.resolve(legacy,request,response).authenticated());
         assertTrue(response.getHeaders("Set-Cookie").isEmpty());
-        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM auth_sessions",Integer.class));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM auth_sessions WHERE user_id=?",Integer.class,user.getId()));
     }
 
     private AuthSessionService service(JwtUtils jwt) {

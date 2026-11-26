@@ -227,7 +227,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         AND o.paid_at <= CAST(:attentionCutoff AS timestamp) AND EXISTS (
                         SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='AUTO'
                           AND oi.stock_mode='CARD_KEY' AND oi.fulfillment_status='PENDING'
-                    )))
+                    ))
                     OR (CAST(:attentionFilter AS text)='PAYMENT_EXCEPTION' AND (
                         (o.status IN ('PENDING','EXPIRED') AND EXISTS (
                             SELECT 1 FROM payment_attempts attempt
@@ -254,7 +254,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                                     AND review.created_at>=event.created_at
                               )
                         )
-                    ))
+                    )))
               AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
@@ -348,7 +348,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         AND o.paid_at <= CAST(:attentionCutoff AS timestamp) AND EXISTS (
                         SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='AUTO'
                           AND oi.stock_mode='CARD_KEY' AND oi.fulfillment_status='PENDING'
-                    )))
+                    ))
                     OR (CAST(:attentionFilter AS text)='PAYMENT_EXCEPTION' AND (
                         (o.status IN ('PENDING','EXPIRED') AND EXISTS (
                             SELECT 1 FROM payment_attempts attempt
@@ -375,7 +375,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                                     AND review.created_at>=event.created_at
                               )
                         )
-                    ))
+                    )))
               AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
