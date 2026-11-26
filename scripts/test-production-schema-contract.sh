@@ -40,6 +40,7 @@ assert contract["tables"]["products"] == ["id", "title", "retail_price", "card_c
 assert "account_payment_transaction_id" in contract["tables"]["payment_attempts"]
 assert "account_payment_transactions" in contract["tables"]
 assert "upgrade_rank" in contract["tables"]["user_levels"]
+assert "manual_delivery" in contract["tables"]["support_system_events"]
 assert "subsite_level_upgrade_rules" in contract["tables"]
 for required_index in (
     "uq_user_levels_upgrade_rank",

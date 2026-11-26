@@ -37,7 +37,7 @@ public class SupportTimelineService {
               am.content AS sale_content,am.sender_type AS sale_sender,am.client_key AS sale_key,
               r.id AS request_id,r.reason,r.rejection_reason,r.submitted_at,
               e.status AS supplier_status,e.reply AS supplier_reply,
-              se.event_type,se.amount AS event_amount,se.direction,se.balance_transaction_id,se.balance_after,
+              se.event_type,se.manual_delivery,se.amount AS event_amount,se.direction,se.balance_transaction_id,se.balance_after,
               se.target_level_name,se.order_id AS event_order_id,
               target_order.id AS target_order_id,target_order.order_no,target_order.status AS order_status,
               target_order.actual_amount,refund_ledger.id AS refund_ledger_id,refund_ledger.amount AS ledger_amount
@@ -280,7 +280,7 @@ public class SupportTimelineService {
         jdbc.query("""
                 SELECT root.id,root.site_id,site.name AS site_name,root.user_id,buyer.username,level.name AS level_name,
                   latest.seq,latest.happened_at,latest.source_type,latest.preview_content,latest.event_type,
-                  latest.event_amount,latest.direction,latest.balance_after,latest.target_level_name,latest.order_no,
+                  latest.manual_delivery,latest.event_amount,latest.direction,latest.balance_after,latest.target_level_name,latest.order_no,
                   latest.refund_amount,latest.actual_amount,latest.ledger_id,latest.has_attachments,last_message.sender_type AS support_sender,
                   unread.count AS unread
                 FROM support_conversations root
@@ -292,7 +292,7 @@ public class SupportTimelineService {
                     CASE a.source_type WHEN 'SUPPORT_MESSAGE' THEN sm.content WHEN 'AFTER_SALE_MESSAGE' THEN am.content
                       WHEN 'AFTER_SALE_APPLY' THEN request.reason WHEN 'AFTER_SALE_REJECT' THEN request.rejection_reason
                       WHEN 'SUPPLIER_UPDATE' THEN supplier.reply ELSE NULL END AS preview_content,
-                    event.event_type,event.amount AS event_amount,event.direction,event.balance_after,
+                    event.event_type,event.manual_delivery,event.amount AS event_amount,event.direction,event.balance_after,
                     event.target_level_name,order_row.order_no::text AS order_no,
                     refund_ledger.amount AS refund_amount,order_row.actual_amount,coalesce(event.balance_transaction_id,refund_ledger.id) AS ledger_id,
                     CASE a.source_type
@@ -365,6 +365,7 @@ public class SupportTimelineService {
                     latest = new LinkedHashMap<>(); latest.put("source_type", sourceType);
                     latest.put("content", rs.getString("preview_content")); latest.put("order_no", rs.getString("order_no"));
                     latest.put("refund_amount", rs.getBigDecimal("refund_amount")); latest.put("event_type", rs.getString("event_type"));
+                    latest.put("manual_delivery", rs.getBoolean("manual_delivery"));
                     latest.put("amount", rs.getBigDecimal("event_amount")); latest.put("direction", rs.getString("direction"));
                     latest.put("balance_after", rs.getBigDecimal("balance_after")); latest.put("level_name", rs.getString("target_level_name"));
                     latest.put("has_attachments", rs.getBoolean("has_attachments"));
@@ -491,6 +492,7 @@ public class SupportTimelineService {
         if ("SUPPLIER_UPDATE".equals(type)) row.put("supplier_status", rs.getInt("supplier_status"));
         if ("SYSTEM_RESULT".equals(type)) {
             row.put("event_type", rs.getString("event_type")); row.put("amount", rs.getBigDecimal("event_amount"));
+            row.put("manual_delivery", rs.getBoolean("manual_delivery"));
             row.put("direction", rs.getString("direction")); row.put("ledger_id", rs.getObject("balance_transaction_id", UUID.class));
             row.put("balance_after", rs.getBigDecimal("balance_after")); row.put("level_name", rs.getString("target_level_name"));
         }
@@ -794,7 +796,10 @@ public class SupportTimelineService {
         if ("LEVEL_UPGRADE_COMPLETED".equals(event)) return "等级升级成功：" + latest.getOrDefault("level_name", "会员等级");
         if ("LEVEL_UPGRADE_RECOVERED".equals(event)) return "等级升级未完成，金额已转入余额" + money;
         if ("BALANCE_ADJUSTMENT".equals(event)) return ("CREDIT".equals(latest.get("direction")) ? "余额增加" : "余额扣减") + money;
-        if ("ORDER_DELIVERED".equals(event)) return "订单 #" + latest.getOrDefault("order_no", "") + " 已完成发货";
+        if ("ORDER_DELIVERED".equals(event)) {
+            String order = "订单 #" + latest.getOrDefault("order_no", "");
+            return Boolean.TRUE.equals(latest.get("manual_delivery")) ? order + " 已完成人工发货" : order + " 已完成发货";
+        }
         return switch ((String) latest.get("source_type")) {
             case "AFTER_SALE_APPLY" -> "申请售后";
             case "AFTER_SALE_REJECT" -> "售后已处理";

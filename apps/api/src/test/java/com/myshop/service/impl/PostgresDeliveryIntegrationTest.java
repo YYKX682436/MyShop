@@ -16,6 +16,7 @@ import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.AdminOrderService;
 import com.myshop.service.FulfillmentService;
+import com.myshop.service.SupportTimelineService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
@@ -124,6 +125,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private FulfillmentService fulfillmentService;
+
+    @Autowired
+    private SupportTimelineService supportTimeline;
 
     @Autowired
     private ManualStockService manualStockService;
@@ -2285,7 +2289,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void manualFulfillmentBatchRequiresEveryWaitingItemAndMutatesAtomically() {
+        UUID buyerId = insertUser("manual-batch-buyer-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID orderId = insertOrder("manual-batch-session");
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
         UUID firstProductId = UUID.randomUUID();
         UUID secondProductId = UUID.randomUUID();
         insertProduct(firstProductId);
@@ -2320,6 +2326,9 @@ class PostgresDeliveryIntegrationTest {
                 new FulfillmentService.ManualFulfillmentItem(secondItemId, "second result")));
         assertEquals("DELIVERED", completed.get("status"));
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(1, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
+        assertEquals(true, scalar("select manual_delivery from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", Boolean.class, orderId));
+        assertEquals(1, number("select count(*) from support_activity where source_type='SYSTEM_RESULT' and source_id=(select id from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED')", orderId));
         assertEquals("first result", scalar(
                 "select customer_delivery_content from order_items where id = ?", String.class, firstItemId));
         assertEquals("second result", scalar(
@@ -2328,11 +2337,68 @@ class PostgresDeliveryIntegrationTest {
                 "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", firstProductId));
         assertEquals(0, number(
                 "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", secondProductId));
+
+        String orderNo = scalar("select order_no::text from orders where id=?", String.class, orderId);
+        com.myshop.context.SiteRequestContext.clear();
+        com.myshop.context.RequestContext.set(new com.myshop.context.RequestContext.UserInfo(buyerId, "manual-batch-buyer", "USER"));
+        try {
+            Map<?, ?> latest = (Map<?, ?>) supportTimeline.customerSummary(null).get("latest");
+            assertEquals("订单 #" + orderNo + " 已完成人工发货", latest.get("preview"));
+        } finally {
+            com.myshop.context.RequestContext.clear();
+            com.myshop.context.SiteRequestContext.clear();
+        }
+        assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(firstItemId, "duplicate"),
+                new FulfillmentService.ManualFulfillmentItem(secondItemId, "duplicate"))));
+        assertEquals(1, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
+    }
+
+    @Test
+    void manualDeliveryEventFailureRollsBackFulfillmentAndStockInSameTransaction() {
+        UUID buyerId = insertUser("manual-event-rollback-buyer-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID orderId = insertOrder("manual-event-rollback-session");
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 1, 1);
+        insertManualStock(productId, null, 0, 1);
+        fulfillmentService.fulfillOrder(orderId);
+
+        jdbcTemplate.execute("""
+                CREATE FUNCTION reject_manual_delivery_event() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.event_type = 'ORDER_DELIVERED' AND NEW.manual_delivery THEN
+                        RAISE EXCEPTION 'test manual delivery result failure';
+                    END IF;
+                    RETURN NEW;
+                END $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER reject_manual_delivery_event BEFORE INSERT ON support_system_events
+                FOR EACH ROW EXECUTE FUNCTION reject_manual_delivery_event()
+                """);
+        try {
+            assertThrows(org.springframework.dao.DataAccessException.class, () -> fulfillmentService.completeManualItems(orderId, List.of(
+                    new FulfillmentService.ManualFulfillmentItem(itemId, "must roll back"))));
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS reject_manual_delivery_event ON support_system_events");
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS reject_manual_delivery_event()");
+        }
+
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(1, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
+        verify(emailService, never()).sendDeliveryEmail(eq(orderId), anyList());
     }
 
     @Test
     void mixedOrderDeliversAutomaticItemWhileManualItemWaits() {
+        UUID buyerId = insertUser("mixed-buyer-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID orderId = insertOrder("mixed-session");
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
         UUID autoProductId = UUID.randomUUID();
         UUID manualProductId = UUID.randomUUID();
         insertProduct(autoProductId);
@@ -2347,6 +2413,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
         assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, manualItemId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        assertEquals(0, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
         verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(autoItemId)));
 
         // A retry while the manual lane is still waiting must not resend the
@@ -2358,7 +2425,55 @@ class PostgresDeliveryIntegrationTest {
                 new FulfillmentService.ManualFulfillmentItem(manualItemId, null)));
         assertEquals("DELIVERED", second.get("status"));
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(1, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
+        assertEquals(true, scalar("select manual_delivery from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", Boolean.class, orderId));
         verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(manualItemId)));
+    }
+
+    @Test
+    void mixedManualDeliveryMessageDoesNotClaimAutomaticPartIsComplete() {
+        UUID buyerId = insertUser("mixed-manual-first-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID orderId = insertOrder("mixed-manual-first-session");
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
+        UUID autoProductId = UUID.randomUUID();
+        UUID manualProductId = UUID.randomUUID();
+        insertProduct(autoProductId);
+        insertProduct(manualProductId);
+        UUID autoItemId = insertOrderItem(orderId, autoProductId, "AUTO", "CARD_KEY", 1, 0);
+        UUID manualItemId = insertOrderItem(orderId, manualProductId, "MANUAL", "MANUAL", 1, 1);
+        insertManualStock(manualProductId, null, 0, 1);
+
+        assertThrows(BusinessException.class, () -> fulfillmentService.fulfillOrder(orderId));
+        assertEquals("PENDING", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
+        assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, manualItemId));
+
+        fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(manualItemId, "人工发货完成")));
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("PENDING", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
+        assertEquals(1, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED' and manual_delivery", orderId));
+
+        insertCard(autoProductId, "mixed-manual-first-auto-card");
+        fulfillmentService.fulfillOrder(orderId);
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(1, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
+    }
+
+    @Test
+    void automaticCardDeliveryDoesNotCreateOrderSupportEvent() {
+        UUID buyerId = insertUser("auto-no-support-event-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID orderId = insertOrder("auto-no-support-event-session");
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID itemId = insertOrderItem(orderId, productId);
+        insertCard(productId, "auto-no-support-event-card");
+
+        fulfillmentService.fulfillOrder(orderId);
+
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(0, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
     }
 
     @Test
@@ -2383,7 +2498,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void expiredManualPaymentConfirmationRestoresAndAutomaticallyFulfillsCardOnlyOnce() {
+        UUID buyerId = insertUser("manual-confirm-auto-buyer-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID orderId = insertExpiredOrder("manual-confirm-auto-" + UUID.randomUUID());
+        jdbcTemplate.update("update orders set user_id = ? where id = ?", buyerId, orderId);
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId);
@@ -2399,12 +2516,14 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
         assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        assertEquals(0, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
 
         markPaidAsAdmin(orderId);
         autoFulfillmentService.trigger(orderId);
 
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        assertEquals(0, number("select count(*) from support_system_events where source_type='ORDER' and source_id=? and event_type='ORDER_DELIVERED'", orderId));
         assertEquals(2, number("select count(*) from operation_logs where action = 'order.mark_paid' and target_type = 'ORDER' and target_id = ? and detail like '%人工确认支付%'", orderId.toString()));
         verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(itemId)));
     }

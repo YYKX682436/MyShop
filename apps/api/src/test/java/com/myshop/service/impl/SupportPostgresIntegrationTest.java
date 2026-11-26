@@ -535,23 +535,17 @@ class SupportPostgresIntegrationTest {
         assertEquals(2,((List<?>)adminRoot.get("pending_after_sales")).size());
     }
 
-    @Test void deliveredOrderCreatesOneCustomerResultAndAfterSaleRestoreDoesNotRepeatIt() {
+    @Test void automaticDeliveredOrderTransitionsDoNotCreateCustomerResult() {
         UUID buyer=UUID.randomUUID(), order=UUID.randomUUID();
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
                 buyer,"delivery-result-"+buyer,buyer+"@example.com",Math.abs((long)buyer.hashCode())+60000L);
         jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,5,5,'PAID','NORMAL')",order,buyer);
         jdbc.update("UPDATE orders SET status='DELIVERED',delivered_at=CURRENT_TIMESTAMP WHERE id=?",order);
-        UUID root=jdbc.queryForObject("SELECT id FROM support_conversations WHERE user_id=? AND order_id IS NULL",UUID.class,buyer);
-        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
         jdbc.update("UPDATE orders SET status='AFTER_SALE' WHERE id=?",order);
         jdbc.update("UPDATE orders SET status='DELIVERED' WHERE id=?",order);
-        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
-        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
-        var result=items(timeline.activities(root,false,null,null,null,20)).stream()
-                .filter(row -> "SYSTEM_RESULT".equals(row.get("source_type"))).findFirst().orElseThrow();
-        assertEquals("ORDER_DELIVERED",result.get("event_type"));
-        assertEquals(order,result.get("order_id"));
-        assertTrue(result.get("order_no") instanceof String);
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='orders' AND t.tgname='support_order_delivery_event' AND NOT t.tgisinternal",Integer.class));
     }
 
     @Test void pagedHistoryAndIncrementalCatchUpUseStableNonoverlappingCursors() {

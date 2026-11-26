@@ -443,6 +443,7 @@ export interface SupportActivity {
   order_status?: string
   supplier_status?: number
   event_type?: "RECHARGE_CREDITED" | "LEVEL_UPGRADE_COMPLETED" | "LEVEL_UPGRADE_RECOVERED" | "BALANCE_ADJUSTMENT" | "ORDER_DELIVERED"
+  manual_delivery?: boolean
   amount?: number | null
   direction?: "NONE" | "CREDIT" | "DEBIT"
   balance_after?: number | null

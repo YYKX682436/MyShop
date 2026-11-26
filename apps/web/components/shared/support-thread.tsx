@@ -427,6 +427,7 @@ function OrderReference({ orderId, orderNo, admin }: { orderId: string; orderNo?
 }
 
 function SystemResult({ item, amount, admin, adminUserId }: { item: SupportActivity; amount: string | null; admin: boolean; adminUserId: string | null }) {
+  if (item.event_type === "ORDER_DELIVERED" && item.manual_delivery) return <p>您的订单{item.order_id ? <> <OrderReference orderId={item.order_id} orderNo={item.order_no} admin={admin} /></> : ""} 已完成人工发货，请查看订单详情。</p>
   if (item.event_type === "ORDER_DELIVERED") return <p>订单{item.order_id ? <> <OrderReference orderId={item.order_id} orderNo={item.order_no} admin={admin} /></> : ""} 已完成发货或直充。</p>
   if (item.event_type === "RECHARGE_CREDITED") return <p>充值{amount ? " " + amount : ""}已到账。{item.ledger_id && <BalanceReference id={item.ledger_id} admin={admin} userId={adminUserId} />}</p>
   if (item.event_type === "LEVEL_UPGRADE_COMPLETED") return <p>会员等级已升级至{item.level_name || "新等级"}。</p>

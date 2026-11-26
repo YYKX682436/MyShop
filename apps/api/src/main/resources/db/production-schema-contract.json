@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 67,
-  "latest_migration_version": "67",
+  "migration_count": 68,
+  "latest_migration_version": "68",
   "tables": {
     "media_assets": ["id", "storage_path", "display_path", "thumbnail_path", "clear_path", "original_filename", "media_type", "mime_type", "size_bytes", "original_size_bytes", "thumbnail_size_bytes", "clear_size_bytes", "width", "height", "duration_ms", "content_hash", "source_hash", "scope", "uploader_id", "owner_user_id", "created_at", "processing_status", "upload_uri", "declared_size_bytes", "processing_error", "processing_reason", "deleted_at", "cleanup_error", "upload_cleanup_error", "reused_asset_id"],
     "media_references": ["asset_id", "owner_type", "owner_id", "field"],
@@ -32,7 +32,7 @@
     "support_activity": ["seq", "conversation_id", "source_type", "source_id", "happened_at", "notify_customer", "notify_admin", "legacy"],
     "support_read_states": ["id", "conversation_id", "viewer_type", "viewer_user_id", "read_seq", "read_at"],
     "support_activity_receipts": ["conversation_id", "seq", "viewer_type", "viewer_user_id", "reader_key", "read_at"],
-    "support_system_events": ["id", "source_type", "source_id", "event_type", "conversation_id", "user_id", "site_id", "order_id", "amount", "direction", "balance_transaction_id", "balance_after", "target_level_id", "target_level_name", "happened_at", "created_at"],
+    "support_system_events": ["id", "source_type", "source_id", "event_type", "conversation_id", "user_id", "site_id", "order_id", "amount", "direction", "balance_transaction_id", "balance_after", "target_level_id", "target_level_name", "happened_at", "created_at", "manual_delivery"],
     "site_announcements": ["id", "site_id", "site_scope", "source_key", "title", "body", "status", "publish_version", "published_at", "audience_type", "audience_level_ids", "create_key", "create_fingerprint"],
     "site_announcement_reads": ["id", "announcement_id", "user_id", "guest_token_hash", "read_version", "read_at"],
     "subsites": ["id", "owner_id", "prefix", "name", "enabled", "favicon_url"],

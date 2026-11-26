@@ -17,6 +17,7 @@ import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -44,6 +45,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final CardKeyRepository cardKeyRepository;
+    private final JdbcTemplate jdbc;
     private final EmailService emailService;
     private final ManualStockService manualStockService;
     private final ManualFulfillmentPreparationService manualFulfillmentPreparationService;
@@ -56,12 +58,14 @@ public class FulfillmentTransactionService implements FulfillmentService {
     public FulfillmentTransactionService(OrderRepository orderRepository,
                                          OrderItemRepository orderItemRepository,
                                          CardKeyRepository cardKeyRepository,
+                                         JdbcTemplate jdbc,
                                          EmailService emailService,
                                          ManualStockService manualStockService,
                                          ManualFulfillmentPreparationService manualFulfillmentPreparationService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
+        this.jdbc = jdbc;
         this.emailService = emailService;
         this.manualStockService = manualStockService;
         this.manualFulfillmentPreparationService = manualFulfillmentPreparationService;
@@ -277,9 +281,26 @@ public class FulfillmentTransactionService implements FulfillmentService {
             orderRepository.save(order);
         }
         if (!newlyCompletedManualItems.isEmpty()) {
+            recordManualDeliveryEvent(order.getId(), deliveredAt);
             notifyAfterCommit(order, newlyCompletedManualItems);
         }
         return result(order, buildDeliveryGroups(order.getId()));
+    }
+
+    private void recordManualDeliveryEvent(UUID orderId, LocalDateTime deliveredAt) {
+        // Derive the recipient and origin site from the persisted business row.
+        // Anonymous orders retain the existing no-system-event behavior.
+        jdbc.update("""
+                INSERT INTO support_system_events(source_type, source_id, event_type, conversation_id,
+                    user_id, site_id, order_id, happened_at, manual_delivery)
+                SELECT 'ORDER', order_row.id, 'ORDER_DELIVERED',
+                    support_ensure_customer_root(order_row.subsite_id, order_row.user_id),
+                    order_row.user_id, order_row.subsite_id, order_row.id, ?, true
+                FROM orders order_row
+                WHERE order_row.id = ? AND order_row.user_id IS NOT NULL
+                    AND order_row.order_type = 'NORMAL'
+                ON CONFLICT (source_type, source_id) DO NOTHING
+                """, deliveredAt, orderId);
     }
 
     private void validateManualRequest(List<FulfillmentService.ManualFulfillmentItem> requestedItems) {

@@ -73,3 +73,12 @@ test("admin support keeps search and quick filters in the database-backed query"
   assert.match(service, /buyer\.username ILIKE \? OR buyer\.email ILIKE \? OR buyer\.user_no::text ILIKE/)
   assert.match(service, /JOIN support_messages message ON activity\.source_type='SUPPORT_MESSAGE'/)
 })
+
+test("manual fulfillment results use a structured marker and keep role-specific order links", () => {
+  const thread = read("../components/shared/support-thread.tsx")
+  const types = read("../services/api.ts")
+  assert.match(thread, /item\.event_type === "ORDER_DELIVERED" && item\.manual_delivery/)
+  assert.match(thread, /您的订单[\s\S]*已完成人工发货，请查看订单详情。/)
+  assert.match(thread, /admin \? "\/admin\/orders\/" : "\/order\/"/)
+  assert.match(types, /manual_delivery\?: boolean/)
+})
