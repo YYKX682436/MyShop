@@ -11,8 +11,8 @@ import com.myshop.model.response.AuthResult;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
+import com.myshop.service.AuthSessionService;
 import com.myshop.utils.CaptchaUtils;
-import com.myshop.utils.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -54,7 +53,7 @@ class AuthServiceImplTest {
     @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
-    private JwtUtils jwtUtils;
+    private AuthSessionService authSessions;
     @Mock
     private CaptchaUtils captchaUtils;
 
@@ -65,7 +64,7 @@ class AuthServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new AuthServiceImpl(userRepository, userNumberSequenceRepository,
-                userLevelRepository, passwordEncoder, jwtUtils, captchaUtils);
+                userLevelRepository, passwordEncoder, authSessions, captchaUtils);
         sequence = new UserNumberSequence(1, 10000L, 10000L);
         defaultLevel = new UserLevel();
         defaultLevel.setId(UUID.randomUUID());
@@ -83,7 +82,8 @@ class AuthServiceImplTest {
             if (user.getId() == null) user.setId(UUID.randomUUID());
             return user;
         });
-        lenient().when(jwtUtils.generateToken(any(), anyString(), anyString(), anyInt())).thenReturn("token");
+        lenient().when(authSessions.create(any(User.class)))
+                .thenReturn(new AuthSessionService.IssuedCredential("opaque-session", 30));
     }
 
     @Test
@@ -92,8 +92,10 @@ class AuthServiceImplTest {
 
         assertEquals(10000L, result.user().getUserNo());
         assertEquals("buyer@example.com", result.user().getEmail());
+        assertEquals("opaque-session", result.token());
+        assertEquals(30, result.lifetimeDays());
         assertEquals(10001L, sequence.getNextUserNo());
-        verify(jwtUtils).generateToken(any(), eq(result.user().getUsername()), eq("USER"), eq(0));
+        verify(authSessions).create(any(User.class));
         verify(userRepository).saveAndFlush(argThat(user ->
                 "13800138000".equals(user.getPhone())
                         && defaultLevel.getId().equals(user.getUserLevelId())

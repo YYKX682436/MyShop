@@ -337,7 +337,18 @@ export type AfterSaleSummary = Pick<AfterSaleRequest,
   | "waiting_for" | "last_activity_at" | "submitted_at" | "handled_at">
 
 export interface AdminAttentionSummary {
+  orders_total: number
   after_sale_needs_attention: number
+  manual_fulfillment_orders: number
+  supplier_exception_orders: number
+  auto_delivery_exception_orders: number
+  payment_exception_orders: number
+  support_total: number
+  support_unread: number
+  support_pending: number
+  supplier_needs_attention: number
+  low_stock_products: number
+  total: number
 }
 
 export interface AfterSaleView {

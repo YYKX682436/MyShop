@@ -1,9 +1,10 @@
 package com.myshop.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.User;
-import com.myshop.repository.UserRepository;
-import com.myshop.utils.JwtUtils;
+import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -14,33 +15,35 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class JwtAuthenticationFilterTest {
 
-    private static final String SECRET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_=+";
+    @Mock private AuthSessionService sessions;
+    @Mock private CustomAccessDeniedHandler accessDeniedHandler;
 
-    @Mock
-    private UserRepository userRepository;
-
+    private AuthCookieService cookies;
     private JwtAuthenticationFilter filter;
-    private JwtUtils jwtUtils;
 
     @BeforeEach
     void setUp() {
-        jwtUtils = new JwtUtils(SECRET, 86_400_000L);
-        filter = new JwtAuthenticationFilter(jwtUtils, userRepository);
+        cookies = new AuthCookieService(false);
+        filter = new JwtAuthenticationFilter(sessions, cookies, accessDeniedHandler, new ObjectMapper());
     }
 
     @AfterEach
@@ -50,38 +53,54 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    void resetDisableAndRestoreInvalidateTheOriginalToken() throws Exception {
+    void activeServerSessionBuildsCurrentUserAuthorityFromDatabaseResolution() throws Exception {
         UUID userId = UUID.randomUUID();
-        User user = user(userId, "database-user", "USER", 0, 0);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        String originalToken = jwtUtils.generateToken(userId, "stale-jwt-user", "USER", 0);
+        User user = user(userId, "database-user", "USER", 4, 0);
+        when(sessions.resolve(eq("opaque-session"), any(), any()))
+                .thenReturn(AuthSessionService.Resolution.authenticated(user));
 
-        assertAuthenticated(run(originalToken), userId, "database-user", "USER");
+        Observation observation = run("opaque-session");
 
-        user.setAuthVersion(1); // password reset
-        assertRejected(run(originalToken));
-
-        user.setIsDeleted(1);
-        user.setAuthVersion(2); // disable
-        assertRejected(run(originalToken));
-
-        user.setIsDeleted(0);
-        user.setAuthVersion(3); // restore; the old v0 token must stay invalid
-        assertRejected(run(originalToken));
-
-        String newToken = jwtUtils.generateToken(userId, "database-user", "USER", 3);
-        assertAuthenticated(run(newToken), userId, "database-user", "USER");
+        assertAuthenticated(observation, userId, "database-user", "USER");
+        verify(sessions).resolve(eq("opaque-session"), any(), any());
     }
 
     @Test
-    void databaseRoleMustMatchTheSignedRole() throws Exception {
-        UUID userId = UUID.randomUUID();
-        User user = user(userId, "database-admin", "ADMIN", 0, 0);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+    void rejectedCredentialClearsContextAndBrowserCookies() throws Exception {
+        when(sessions.resolve(eq("revoked-session"), any(), any()))
+                .thenReturn(AuthSessionService.Resolution.invalid());
 
-        String token = jwtUtils.generateToken(userId, "stale-user", "USER", 0);
+        Observation observation = run("revoked-session");
 
-        assertRejected(run(token));
+        assertNull(observation.authentication());
+        assertNull(observation.context());
+        assertEquals(2, observation.response().getHeaders("Set-Cookie").size());
+        verify(accessDeniedHandler, org.mockito.Mockito.never()).handle(any(), any(), any());
+    }
+
+    @Test
+    void crossSiteCredentialUsesForbiddenHandlerWithoutClearingItsSession() throws Exception {
+        when(sessions.resolve(eq("other-site-session"), any(), any()))
+                .thenReturn(AuthSessionService.Resolution.forbiddenResult());
+
+        Observation observation = run("other-site-session");
+
+        assertNull(observation.authentication());
+        assertNull(observation.context());
+        verify(accessDeniedHandler).handle(any(), any(), any(AccessDeniedException.class));
+        assertEquals(0, observation.response().getHeaders("Set-Cookie").size());
+    }
+
+    @Test
+    void databaseFailureReturnsRetryableServiceUnavailableAndKeepsCredential() throws Exception {
+        when(sessions.resolve(eq("temporarily-unavailable"), any(), any()))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        Observation observation = run("temporarily-unavailable");
+
+        assertEquals(503, observation.response().getStatus());
+        assertEquals(0, observation.response().getHeaders("Set-Cookie").size());
+        assertNull(observation.authentication());
     }
 
     private Observation run(String token) throws Exception {
@@ -96,13 +115,12 @@ class JwtAuthenticationFilterTest {
             authentication.set(SecurityContextHolder.getContext().getAuthentication());
             context.set(RequestContext.get());
         };
-
         filter.doFilter(request, response, chain);
-        return new Observation(authentication.get(), context.get());
+        return new Observation(authentication.get(), context.get(), response);
     }
 
     private void assertAuthenticated(Observation observation, UUID userId,
-                                      String username, String role) {
+                                    String username, String role) {
         assertNotNull(observation.authentication());
         assertEquals(userId, observation.authentication().getPrincipal());
         assertEquals("ROLE_" + role,
@@ -111,11 +129,6 @@ class JwtAuthenticationFilterTest {
         assertEquals(userId, observation.context().getUserId());
         assertEquals(username, observation.context().getUsername());
         assertEquals(role, observation.context().getRole());
-    }
-
-    private void assertRejected(Observation observation) {
-        assertNull(observation.authentication());
-        assertNull(observation.context());
     }
 
     private User user(UUID id, String username, String role, int authVersion, int isDeleted) {
@@ -128,6 +141,6 @@ class JwtAuthenticationFilterTest {
         return user;
     }
 
-    private record Observation(Authentication authentication, RequestContext.UserInfo context) {
-    }
+    private record Observation(Authentication authentication, RequestContext.UserInfo context,
+                               MockHttpServletResponse response) { }
 }

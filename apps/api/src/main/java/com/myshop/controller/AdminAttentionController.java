@@ -1,7 +1,7 @@
 package com.myshop.controller;
 
 import com.myshop.common.ApiResponse;
-import com.myshop.service.AfterSaleService;
+import com.myshop.service.AdminAttentionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,11 +15,10 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AdminAttentionController {
 
-    private final AfterSaleService afterSaleService;
+    private final AdminAttentionService attentionService;
 
     @GetMapping("/attention-summary")
     public ApiResponse<?> summary() {
-        return ApiResponse.success(Map.of(
-                "after_sale_needs_attention", afterSaleService.countNeedsAdminAttention()));
+        return ApiResponse.success(attentionService.summary());
     }
 }

@@ -203,6 +203,58 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             WHERE o.order_type = 'NORMAL'
               AND CAST(:sortDirection AS text) IN ('asc', 'desc')
               AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
+              AND (
+                    CAST(:attentionFilter AS text) IS NULL
+                    OR (CAST(:attentionFilter AS text)='AFTER_SALE' AND EXISTS (
+                        SELECT 1 FROM after_sale_requests r WHERE r.order_id=o.id
+                          AND r.status='PENDING' AND r.waiting_for='ADMIN'))
+                    OR (CAST(:attentionFilter AS text)='MANUAL_FULFILLMENT' AND o.status='PAID' AND EXISTS (
+                        SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='MANUAL'
+                          AND oi.fulfillment_status='WAITING_MANUAL'))
+                    OR (CAST(:attentionFilter AS text)='SUPPLIER_EXCEPTION' AND EXISTS (
+                        SELECT 1 FROM supplier_purchases purchase
+                        LEFT JOIN supplier_aftercare_operations operation ON operation.purchase_id=purchase.id
+                        WHERE purchase.order_id=o.id AND o.status IN ('PAID','DELIVERED','AFTER_SALE') AND (
+                            purchase.status='BLOCKED'
+                            OR (purchase.status IN ('UNKNOWN','SUBMITTING')
+                                AND coalesce(purchase.submit_started_at,purchase.created_at)<=CAST(:attentionCutoff AS timestamp))
+                            OR (operation.kind='COMPLAINT' AND operation.status='UNKNOWN')
+                            OR (operation.kind IN ('REFUND','CARD_VOID')
+                                AND operation.status IN ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED')
+                                AND coalesce(operation.submitted_at,operation.created_at)<=CAST(:attentionCutoff AS timestamp))
+                        )))
+                    OR (CAST(:attentionFilter AS text)='AUTO_DELIVERY_EXCEPTION' AND o.status='PAID'
+                        AND o.paid_at <= CAST(:attentionCutoff AS timestamp) AND EXISTS (
+                        SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='AUTO'
+                          AND oi.stock_mode='CARD_KEY' AND oi.fulfillment_status='PENDING'
+                    )))
+                    OR (CAST(:attentionFilter AS text)='PAYMENT_EXCEPTION' AND (
+                        (o.status IN ('PENDING','EXPIRED') AND EXISTS (
+                            SELECT 1 FROM payment_attempts attempt
+                            WHERE attempt.order_id=o.id AND attempt.status='PENDING'
+                              AND (attempt.creation_status='UNKNOWN'
+                                   OR (attempt.creation_status='SUBMITTING'
+                                       AND coalesce(attempt.creation_started_at,attempt.created_at)<=CAST(:attentionCutoff AS timestamp)))
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM operation_logs review
+                                  WHERE review.target_type='ORDER' AND review.target_id=o.id::text
+                                    AND review.action='order.payment_review'
+                                    AND review.detail LIKE '支付记录 ' || attempt.id::text || '：%'
+                                    AND review.created_at>=attempt.created_at
+                              )
+                        )) OR EXISTS (
+                            SELECT 1 FROM webhook_events event
+                            JOIN payment_attempts attempt ON attempt.id=event.payment_attempt_id
+                            WHERE event.order_id=o.id AND left(event.process_result,10)='LATE_PAID_'
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM operation_logs review
+                                  WHERE review.target_type='ORDER' AND review.target_id=o.id::text
+                                    AND review.action='order.payment_review'
+                                    AND review.detail LIKE '支付记录 ' || attempt.id::text || '：%'
+                                    AND review.created_at>=event.created_at
+                              )
+                        )
+                    ))
               AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
@@ -272,6 +324,58 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             WHERE o.order_type = 'NORMAL'
               AND CAST(:sortDirection AS text) IN ('asc', 'desc')
               AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
+              AND (
+                    CAST(:attentionFilter AS text) IS NULL
+                    OR (CAST(:attentionFilter AS text)='AFTER_SALE' AND EXISTS (
+                        SELECT 1 FROM after_sale_requests r WHERE r.order_id=o.id
+                          AND r.status='PENDING' AND r.waiting_for='ADMIN'))
+                    OR (CAST(:attentionFilter AS text)='MANUAL_FULFILLMENT' AND o.status='PAID' AND EXISTS (
+                        SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='MANUAL'
+                          AND oi.fulfillment_status='WAITING_MANUAL'))
+                    OR (CAST(:attentionFilter AS text)='SUPPLIER_EXCEPTION' AND EXISTS (
+                        SELECT 1 FROM supplier_purchases purchase
+                        LEFT JOIN supplier_aftercare_operations operation ON operation.purchase_id=purchase.id
+                        WHERE purchase.order_id=o.id AND o.status IN ('PAID','DELIVERED','AFTER_SALE') AND (
+                            purchase.status='BLOCKED'
+                            OR (purchase.status IN ('UNKNOWN','SUBMITTING')
+                                AND coalesce(purchase.submit_started_at,purchase.created_at)<=CAST(:attentionCutoff AS timestamp))
+                            OR (operation.kind='COMPLAINT' AND operation.status='UNKNOWN')
+                            OR (operation.kind IN ('REFUND','CARD_VOID')
+                                AND operation.status IN ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED')
+                                AND coalesce(operation.submitted_at,operation.created_at)<=CAST(:attentionCutoff AS timestamp))
+                        )))
+                    OR (CAST(:attentionFilter AS text)='AUTO_DELIVERY_EXCEPTION' AND o.status='PAID'
+                        AND o.paid_at <= CAST(:attentionCutoff AS timestamp) AND EXISTS (
+                        SELECT 1 FROM order_items oi WHERE oi.order_id=o.id AND oi.delivery_type='AUTO'
+                          AND oi.stock_mode='CARD_KEY' AND oi.fulfillment_status='PENDING'
+                    )))
+                    OR (CAST(:attentionFilter AS text)='PAYMENT_EXCEPTION' AND (
+                        (o.status IN ('PENDING','EXPIRED') AND EXISTS (
+                            SELECT 1 FROM payment_attempts attempt
+                            WHERE attempt.order_id=o.id AND attempt.status='PENDING'
+                              AND (attempt.creation_status='UNKNOWN'
+                                   OR (attempt.creation_status='SUBMITTING'
+                                       AND coalesce(attempt.creation_started_at,attempt.created_at)<=CAST(:attentionCutoff AS timestamp)))
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM operation_logs review
+                                  WHERE review.target_type='ORDER' AND review.target_id=o.id::text
+                                    AND review.action='order.payment_review'
+                                    AND review.detail LIKE '支付记录 ' || attempt.id::text || '：%'
+                                    AND review.created_at>=attempt.created_at
+                              )
+                        )) OR EXISTS (
+                            SELECT 1 FROM webhook_events event
+                            JOIN payment_attempts attempt ON attempt.id=event.payment_attempt_id
+                            WHERE event.order_id=o.id AND left(event.process_result,10)='LATE_PAID_'
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM operation_logs review
+                                  WHERE review.target_type='ORDER' AND review.target_id=o.id::text
+                                    AND review.action='order.payment_review'
+                                    AND review.detail LIKE '支付记录 ' || attempt.id::text || '：%'
+                                    AND review.created_at>=event.created_at
+                              )
+                        )
+                    ))
               AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
@@ -322,6 +426,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             """,
             nativeQuery = true)
     Page<Order> searchAdminOrders(@Param("status") String status,
+                                   @Param("attentionFilter") String attentionFilter,
+                                   @Param("attentionCutoff") LocalDateTime attentionCutoff,
                                    @Param("createdFrom") LocalDateTime createdFrom,
                                    @Param("createdTo") LocalDateTime createdTo,
                                    @Param("keywordPattern") String keywordPattern,

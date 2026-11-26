@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useVisiblePoll } from "@/hooks/use-visible-poll"
 import { useAuth } from "@/lib/context"
+import { useAdminAttention } from "@/lib/admin-attention"
 import { adminSubsiteApi, adminUserLevelApi, supportApi, type SubsiteInfo, type SupportConversation } from "@/services/api"
 import type { UserLevel } from "@/types"
 
@@ -25,6 +26,7 @@ function compactTime(value: string | null) {
 
 function Workbench() {
   const { user, authLoaded } = useAuth()
+  const { summary: attention } = useAdminAttention()
   const identity = authLoaded && user ? "admin:" + user.id : ""
   const search = useSearchParams()
   const router = useRouter()
@@ -145,6 +147,7 @@ function Workbench() {
             onClick={() => setFilter(() => setQuickFilter(value))}
             className={`min-h-9 flex-1 rounded-control px-2 text-xs ${quickFilter === value ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted"}`}>
             {value === "all" ? "全部" : value === "unread" ? "未读" : "待处理"}
+            {value !== "all" && (value === "unread" ? attention.support_unread : attention.support_pending) > 0 && <span className="ml-1.5 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-destructive-foreground">{Math.min(99, value === "unread" ? attention.support_unread : attention.support_pending)}{(value === "unread" ? attention.support_unread : attention.support_pending) > 99 ? "+" : ""}</span>}
           </button>)}
         </div>
         <details className="group shrink-0 border-b border-border-subtle px-3 py-2">

@@ -55,6 +55,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             "custom_css",
             // 系统参数
             "order_expire_minutes", "rate_limit_per_second",
+            "login_duration_days", "low_stock_attention_enabled",
             // 余额充值
             "recharge_enabled", "recharge_min_amount", "recharge_max_amount"
     );
@@ -138,6 +139,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if (com.myshop.config.RiskConfigPolicy.isRiskKey(key)) {
                 value = com.myshop.config.RiskConfigPolicy.validateSiteConfigValue(key, value);
             }
+            if ("login_duration_days".equals(key)) value = validateLoginDuration(value);
+            if ("low_stock_attention_enabled".equals(key)) value = validateBooleanConfig(value, "库存提醒开关");
             // F15: custom_css 写入时也做安全过滤
             if ("custom_css".equals(key) && value != null) {
                 value = sanitizeCss(value);
@@ -156,6 +159,20 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if ("favicon_url".equals(key) && mediaAssets != null)
                 mediaAssets.replaceReferences("SITE_CONFIG", saved.getId(), faviconReferences, "favicon_url");
         }
+    }
+
+    private String validateLoginDuration(String value) {
+        try {
+            int days = Integer.parseInt(value == null ? "" : value.trim());
+            if (days == 15 || days == 30 || days == 90 || days == 365) return Integer.toString(days);
+        } catch (NumberFormatException ignored) { }
+        throw new BusinessException(ErrorCode.BAD_REQUEST, "登录有效期仅支持 15 天、30 天、90 天或长期保持登录");
+    }
+
+    private String validateBooleanConfig(String value, String label) {
+        if ("true".equalsIgnoreCase(value)) return "true";
+        if ("false".equalsIgnoreCase(value)) return "false";
+        throw new BusinessException(ErrorCode.BAD_REQUEST, label + "配置无效");
     }
 
     private void validateRechargeConfiguration(List<Map<String, String>> configs) {

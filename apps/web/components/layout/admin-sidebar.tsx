@@ -46,7 +46,7 @@ interface AdminNavItem {
   href: string
   icon: LucideIcon
   superAdminOnly?: boolean
-  attention?: boolean
+  attention?: "orders" | "support" | "suppliers" | "products"
 }
 
 interface AdminNavGroup {
@@ -62,17 +62,17 @@ const navGroups: AdminNavGroup[] = [
   {
     labelKey: "admin.navProductsInventory",
     items: [
-      { labelKey: "admin.products", href: "/admin/products", icon: Package },
+      { labelKey: "admin.products", href: "/admin/products", icon: Package, attention: "products" },
       { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
-      { labelKey: "admin.suppliers", href: "/admin/suppliers", icon: Truck },
+      { labelKey: "admin.suppliers", href: "/admin/suppliers", icon: Truck, attention: "suppliers" },
       { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
     ],
   },
   {
     labelKey: "admin.navTransactions",
     items: [
-      { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
-      { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle },
+      { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: "orders" },
+      { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle, attention: "support" },
       { labelKey: "admin.notifications", href: "/admin/notifications", icon: Bell },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
@@ -106,9 +106,12 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
   const pathname = usePathname()
   const { isMobile, setOpenMobile } = useSidebar()
   const { t } = useLocale()
-  const { afterSaleNeedsAttention } = useAdminAttention()
+  const { summary } = useAdminAttention()
   const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
-  const attentionCount = item.attention ? afterSaleNeedsAttention : 0
+  const attentionCount = item.attention === "orders" ? summary.orders_total
+    : item.attention === "support" ? summary.support_total
+      : item.attention === "suppliers" ? summary.supplier_needs_attention
+        : item.attention === "products" ? summary.low_stock_products : 0
   const attentionLabel = attentionCount > 99 ? "99+" : String(attentionCount)
 
   return (
@@ -125,8 +128,8 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
           <span
             role="status"
             data-testid="admin-orders-attention-badge"
-            title={`${t("admin.afterSaleNeedsAttention")}: ${attentionLabel}`}
-            aria-label={`${t("admin.afterSaleNeedsAttention")}: ${attentionLabel}`}
+            title={`${t(item.labelKey)}: ${attentionLabel}`}
+            aria-label={`${t(item.labelKey)}: ${attentionLabel}`}
             className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold leading-none text-destructive-foreground group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:right-0 group-data-[collapsible=icon]:top-0 group-data-[collapsible=icon]:min-w-3 group-data-[collapsible=icon]:px-0.5 group-data-[collapsible=icon]:py-0.5"
           >
             <span className="group-data-[collapsible=icon]:hidden">{attentionLabel}</span>

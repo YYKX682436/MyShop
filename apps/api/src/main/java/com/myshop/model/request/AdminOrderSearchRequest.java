@@ -10,6 +10,11 @@ public record AdminOrderSearchRequest(
         String status,
         @JsonProperty("created_from") String createdFrom,
         @JsonProperty("created_to") String createdTo,
-        @JsonProperty("sort_direction") String sortDirection
+        @JsonProperty("sort_direction") String sortDirection,
+        @JsonProperty("attention_filter") String attentionFilter
 ) {
+    public AdminOrderSearchRequest(Integer page, Integer pageSize, String keyword, String status,
+                                   String createdFrom, String createdTo, String sortDirection) {
+        this(page, pageSize, keyword, status, createdFrom, createdTo, sortDirection, null);
+    }
 }

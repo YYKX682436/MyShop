@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useLocale } from "@/lib/context"
 import { stockNoticeKey } from "@/lib/product-stock"
 import { invalidateAdminData, takeCreatedProduct, takeProductRestock, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { getProductCategoryPathLabel, matchesCategory } from "@/lib/categories"
 import { cn, stripInvisible } from "@/lib/utils"
@@ -179,6 +180,7 @@ export default function AdminProductsPage() {
       if (result && typeof result === "object" && "id" in result) replaceProduct(result as AdminProductDetail)
       await onSuccess?.()
       invalidateAdminData("products", "inventory")
+      invalidateAdminAttention()
       toast.success(t("admin.quickEditSaved"))
       return true
     } catch (requestError: unknown) {
@@ -220,6 +222,7 @@ export default function AdminProductsPage() {
       if (createdTarget?.id === deleteProduct.id) setCreatedTarget(null)
       setDeleteProduct(null)
       invalidateAdminData("products", "inventory")
+      invalidateAdminAttention()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.deleteConfirm"))
     } finally {

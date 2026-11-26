@@ -277,6 +277,24 @@ export default function AdminSiteConfigPage() {
               </div>
             )}
           </SettingsSection>
+          <SettingsSection title={t("admin.loginAndAttention")}>
+            <div className="max-w-2xl space-y-5">
+              <label className="flex flex-col gap-1.5 text-sm font-medium">
+                <span>{t("admin.loginDuration")}</span>
+                <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={getValue("login_duration_days") || "30"} onChange={(event) => setValue("login_duration_days", event.target.value)} disabled={saving || refreshing}>
+                  <option value="15">{t("admin.loginDuration15")}</option>
+                  <option value="30">{t("admin.loginDuration30")}</option>
+                  <option value="90">{t("admin.loginDuration90")}</option>
+                  <option value="365">{t("admin.loginDurationLong")}</option>
+                </select>
+              </label>
+              <div className="flex items-center justify-between gap-4 rounded-control border border-border-subtle bg-surface-muted/60 px-3.5 py-3">
+                <span className="text-sm font-medium">{t("admin.stockAttentionEnabled")}</span>
+                <Switch checked={getBool("low_stock_attention_enabled")} onCheckedChange={(checked) => setValue("low_stock_attention_enabled", String(checked))} disabled={saving || refreshing} aria-label={t("admin.stockAttentionEnabled")} />
+              </div>
+              {saveButton}
+            </div>
+          </SettingsSection>
           <SettingsSection title={t("admin.rechargeTitle")} description={t("admin.rechargeSettingsHint")}>
             <div className="max-w-2xl space-y-5">
               <div className="flex items-center justify-between gap-4 rounded-control border border-border-subtle bg-surface-muted/60 px-3.5 py-3">

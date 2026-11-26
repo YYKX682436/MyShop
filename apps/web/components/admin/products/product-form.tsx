@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { getCategoryChildren, getCategorySelection, getRootCategories } from "@/lib/categories"
 import { announceCreatedProduct, invalidateAdminData } from "@/lib/admin-data-invalidation"
+import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { uploadAdminImage } from "@/lib/admin-image-upload"
 import {
   buildPricingPreviewDraft,
@@ -649,6 +650,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       const saved = existing
         ? await requestOrThrow(() => adminProductApi.update(existing.id, basePayload))
         : await requestOrThrow(() => adminProductApi.create(basePayload))
+      invalidateAdminAttention()
       savedProductRef.current = saved
       if (existing) invalidateAdminData("products", "inventory")
       else announceCreatedProduct(saved.id, saved.product_no)
@@ -675,6 +677,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
         setSupplierMappings(currentMappings)
         setSupplierChoices(current => { const next = { ...current }; delete next[key]; return next })
       }
+      invalidateAdminAttention()
       const completed = supplierMode && changesSources ? await adminProductApi.getDetail(saved.id) : saved
       savedProductRef.current = completed
       toast.success(t("admin.productSaved"))

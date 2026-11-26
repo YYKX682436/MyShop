@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
 import type { UserProfile, SiteConfig } from "@/types"
-import { siteApi, userApi, authApi, requestOrThrow, setMessageViewer } from "@/services/api"
+import { siteApi, userApi, authApi, requestOrThrow, setMessageViewer, isUnauthorizedApiError } from "@/services/api"
 
 // ============================================================
 // Theme
@@ -195,27 +195,61 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const userRef = useRef<UserProfile | null>(null)
   const profileRefreshInFlight = useRef(false)
   const lastProfileRefreshAt = useRef(0)
+  const initialAuthRetry = useRef<number | null>(null)
+  const profileRetryTimer = useRef<number | null>(null)
+  const refreshProfileRef = useRef<(force?: boolean) => Promise<void>>(async () => {})
 
   useEffect(() => { userRef.current = user }, [user])
 
   useEffect(() => {
     let cancelled = false
-    const requestVersion = authVersionRef.current
-    userApi.getProfile()
-      .then(profile => {
-        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(profile.id, profile.user_level_id); setUserState(profile) }
-      })
-      .catch(() => {
-        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(null); setUserState(null) }
-      })
-      .finally(() => {
-        if (!cancelled && requestVersion === authVersionRef.current) setAuthLoaded(true)
-      })
-    return () => { cancelled = true }
+    let retries = 0
+    const loadProfile = async () => {
+      const requestVersion = authVersionRef.current
+      const controller = new AbortController()
+      const timeout = window.setTimeout(() => controller.abort(), 15_000)
+      try {
+        const profile = await userApi.getProfile(controller.signal)
+        if (!cancelled && requestVersion === authVersionRef.current) {
+          userRef.current = profile
+          setMessageViewer(profile.id, profile.user_level_id)
+          setUserState(profile)
+          setAuthLoaded(true)
+          initialAuthRetry.current = null
+        }
+      } catch (error) {
+        if (cancelled || requestVersion !== authVersionRef.current) return
+        if (isUnauthorizedApiError(error)) {
+          userRef.current = null
+          setMessageViewer(null)
+          setUserState(null)
+          setAuthLoaded(true)
+          initialAuthRetry.current = null
+          return
+        }
+        // A timeout, offline period, 403, or server error cannot establish
+        // that the browser has no valid session. Keep guards in the loading
+        // state and retry with bounded backoff instead of redirecting to login.
+        setAuthLoaded(false)
+        retries += 1
+        const delay = Math.min(30_000, 1000 * 2 ** Math.min(retries - 1, 5))
+        initialAuthRetry.current = window.setTimeout(() => { void loadProfile() }, delay)
+      } finally {
+        window.clearTimeout(timeout)
+      }
+    }
+    void loadProfile()
+    return () => {
+      cancelled = true
+      if (initialAuthRetry.current) window.clearTimeout(initialAuthRetry.current)
+      if (profileRetryTimer.current) window.clearTimeout(profileRetryTimer.current)
+    }
   }, [])
 
   const setUser = useCallback((u: UserProfile | null) => {
     authVersionRef.current += 1
+    userRef.current = u
+    if (profileRetryTimer.current) window.clearTimeout(profileRetryTimer.current)
     setMessageViewer(u?.id ?? null, u?.user_level_id)
     setUserState(u)
     setAuthLoaded(true)
@@ -227,30 +261,50 @@ export function AppProviders({ children }: { children: ReactNode }) {
     profileRefreshInFlight.current = true
     lastProfileRefreshAt.current = now
     const requestVersion = ++authVersionRef.current
-    setMessageViewer(undefined)
-    setAuthLoaded(false)
+    const previousUser = userRef.current
+    if (!previousUser) {
+      setMessageViewer(undefined)
+      setAuthLoaded(false)
+    }
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15_000)
     try {
-      const profile = await userApi.getProfile()
+      const profile = await userApi.getProfile(controller.signal)
       if (requestVersion === authVersionRef.current) {
         userRef.current = profile
         setMessageViewer(profile.id, profile.user_level_id)
         setUserState(profile)
+        setAuthLoaded(true)
       }
-    } catch {
+    } catch (error) {
       if (requestVersion === authVersionRef.current) {
-        userRef.current = null
-        setMessageViewer(null)
-        setUserState(null)
+        if (isUnauthorizedApiError(error)) {
+          userRef.current = null
+          setMessageViewer(null)
+          setUserState(null)
+          setAuthLoaded(true)
+          if (profileRetryTimer.current) window.clearTimeout(profileRetryTimer.current)
+        } else if (previousUser) {
+          // Keep the last known identity during transient network or server
+          // failures. The next focus/visibility event will retry the profile.
+          setMessageViewer(previousUser.id, previousUser.user_level_id)
+          setUserState(previousUser)
+          setAuthLoaded(true)
+          if (profileRetryTimer.current) window.clearTimeout(profileRetryTimer.current)
+          profileRetryTimer.current = window.setTimeout(() => { void refreshProfileRef.current(true) }, 30_000)
+        }
       }
     } finally {
-      if (requestVersion === authVersionRef.current) setAuthLoaded(true)
+      window.clearTimeout(timeout)
       profileRefreshInFlight.current = false
     }
   }, [])
 
+  refreshProfileRef.current = refreshProfile
+
   useEffect(() => {
     const refreshWhenVisible = () => {
-      if (authLoaded && document.visibilityState === "visible") void refreshProfile()
+      if (document.visibilityState === "visible" && (authLoaded || userRef.current)) void refreshProfile()
     }
     const refreshOnIdentityMismatch = () => { void refreshProfile(true) }
     window.addEventListener("focus", refreshWhenVisible)
@@ -273,6 +327,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     try {
       await authApi.logout()
       if (requestVersion !== authVersionRef.current) return
+      userRef.current = null
       setMessageViewer(null); setUserState(null); setAuthLoaded(true)
     } catch (error) {
       if (requestVersion !== authVersionRef.current) throw error

@@ -1,110 +1,82 @@
 package com.myshop.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myshop.common.ApiResponse;
+import com.myshop.constant.ErrorCode;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.User;
-import com.myshop.repository.UserRepository;
-import com.myshop.utils.JwtUtils;
-import io.jsonwebtoken.Claims;
+import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.UUID;
 
-/**
- * JWT is only a signed locator. Every request with a token re-reads the user
- * row so deletion, role changes, password resets, and status changes take
- * effect without waiting for token expiry.
- */
+/** Resolves persistent opaque sessions and upgrades still-valid legacy JWTs. */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private final JwtUtils jwtUtils;
-    private final UserRepository userRepository;
+    private final AuthSessionService sessions;
+    private final AuthCookieService cookies;
+    private final CustomAccessDeniedHandler accessDeniedHandler;
+    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         try {
-            String token = extractToken(request);
-            if (StringUtils.hasText(token)) {
-                // A presented token is authoritative for this request. Do
-                // not let an earlier filter's authentication survive a bad
-                // or stale cookie.
+            String token = cookies.getAccessToken(request);
+            if (token != null && !token.isBlank()) {
                 SecurityContextHolder.clearContext();
-                authenticateFromDatabase(token);
+                AuthSessionService.Resolution resolution;
+                try {
+                    resolution = sessions.resolve(token, request, response);
+                } catch (RuntimeException exception) {
+                    // A database outage is not evidence that the browser
+                    // credential expired. Keep cookies intact and let the
+                    // client retry the request.
+                    log.warn("Authentication session lookup is temporarily unavailable", exception);
+                    response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                    response.setCharacterEncoding("UTF-8");
+                    response.setHeader("Cache-Control", "no-store");
+                    response.getWriter().write(objectMapper.writeValueAsString(
+                            ApiResponse.error(ErrorCode.SERVER_ERROR, "认证服务暂不可用，请重试")));
+                    return;
+                }
+                if (resolution.forbidden()) {
+                    accessDeniedHandler.handle(request, response, new AccessDeniedException("站点访问受限"));
+                    return;
+                }
+                User user = resolution.user();
+                if (user == null) {
+                    cookies.clearAuthCookies(response);
+                } else {
+                    String role = user.getRole().name();
+                    RequestContext.set(new RequestContext.UserInfo(user.getId(), user.getUsername(), role));
+                    var authentication = new UsernamePasswordAuthenticationToken(user.getId(), null,
+                            List.of(new SimpleGrantedAuthority("ROLE_" + role)));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
             }
             filterChain.doFilter(request, response);
         } finally {
             RequestContext.clear();
         }
-    }
-
-    private void authenticateFromDatabase(String token) {
-        Claims claims = jwtUtils.parseTokenSafe(token);
-        if (claims == null) return;
-
-        UUID userId;
-        String tokenRole = claims.get("role", String.class);
-        Integer tokenAuthVersion = authVersion(claims.get("authVersion"));
-        try {
-            userId = UUID.fromString(claims.getSubject());
-        } catch (Exception exception) {
-            return;
-        }
-        if (!StringUtils.hasText(tokenRole) || tokenAuthVersion == null) return;
-
-        try {
-            User user = userRepository.findById(userId).orElse(null);
-            if (user == null || user.getIsDeleted() != 0
-                    || !user.getRole().name().equals(tokenRole)
-                    || user.getAuthVersion() != tokenAuthVersion
-                    || !com.myshop.service.SubsiteAccess.permits(user)) {
-                log.debug("JWT rejected by current user authority");
-                return;
-            }
-
-            String databaseRole = user.getRole().name();
-            RequestContext.set(new RequestContext.UserInfo(user.getId(), user.getUsername(), databaseRole));
-            var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + databaseRole));
-            var authentication = new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
-            SecurityContextHolder.getContext().setAuthentication(authentication);
-        } catch (RuntimeException exception) {
-            // Authentication must fail closed when the authority lookup is not
-            // usable, while public endpoints can still render their response.
-            log.warn("JWT database authority lookup failed", exception);
-        }
-    }
-
-    private Integer authVersion(Object value) {
-        if (!(value instanceof Number number)) return null;
-        long candidate = number.longValue();
-        return candidate < Integer.MIN_VALUE || candidate > Integer.MAX_VALUE ? null : (int) candidate;
-    }
-
-    private String extractToken(HttpServletRequest request) {
-        Cookie[] cookies = request.getCookies();
-        if (cookies == null) return null;
-        for (Cookie cookie : cookies) {
-            if ("myshop_access_token".equals(cookie.getName()) && StringUtils.hasText(cookie.getValue())) {
-                return cookie.getValue();
-            }
-        }
-        return null;
     }
 }

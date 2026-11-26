@@ -1,11 +1,12 @@
 {
   "version": 1,
-  "migration_count": 68,
-  "latest_migration_version": "68",
+  "migration_count": 69,
+  "latest_migration_version": "69",
   "tables": {
     "media_assets": ["id", "storage_path", "display_path", "thumbnail_path", "clear_path", "original_filename", "media_type", "mime_type", "size_bytes", "original_size_bytes", "thumbnail_size_bytes", "clear_size_bytes", "width", "height", "duration_ms", "content_hash", "source_hash", "scope", "uploader_id", "owner_user_id", "created_at", "processing_status", "upload_uri", "declared_size_bytes", "processing_error", "processing_reason", "deleted_at", "cleanup_error", "upload_cleanup_error", "reused_asset_id"],
     "media_references": ["asset_id", "owner_type", "owner_id", "field"],
     "users": ["id", "username", "role", "subsite_id"],
+    "auth_sessions": ["token_hash", "user_id", "user_role", "auth_version", "created_at", "last_seen_at", "renewed_at", "expires_at", "revoked_at", "revoked_reason"],
     "products": ["id", "title", "retail_price", "card_content_column_count"],
     "orders": ["id", "order_no", "status", "created_at", "subsite_id", "subsite_owner_id_snapshot", "subsite_profit", "subsite_profit_settled_at", "subsite_profit_reversed_at", "subsite_profit_state", "subsite_profit_canceled_at"],
     "order_no_registry": ["order_no"],
@@ -122,6 +123,16 @@
     "uq_supplier_complaint_unresolved",
     "uq_supplier_complaint_req",
     "uq_supplier_complaint_event",
-    "uq_supplier_complaint_event_status"
+    "uq_supplier_complaint_event_status",
+    "idx_auth_sessions_expiry",
+    "idx_auth_sessions_user_active",
+    "idx_orders_paid_attention",
+    "idx_order_items_manual_attention",
+    "idx_order_items_auto_attention",
+    "idx_webhook_events_payment_attention",
+    "idx_manual_stocks_product_attention",
+    "idx_supplier_purchases_attention",
+    "idx_supplier_aftercare_attention",
+    "idx_supplier_mapping_attention"
   ]
 }

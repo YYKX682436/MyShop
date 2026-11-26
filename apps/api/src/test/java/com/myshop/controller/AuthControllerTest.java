@@ -7,6 +7,7 @@ import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.service.AuthService;
 import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,12 +36,15 @@ class AuthControllerTest {
     private ClientIpResolver clientIpResolver;
     @Mock
     private AuthCookieService authCookieService;
+    @Mock
+    private AuthSessionService authSessionService;
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, clientIpResolver, authCookieService)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(
+                authService, clientIpResolver, authCookieService, authSessionService)).build();
     }
 
     @Test
@@ -57,6 +62,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.user.email").value("buyer@example.com"));
 
         verify(authService).login(any(LoginRequest.class), eq("2001:4860:4860::8888"));
+        verify(authCookieService).writeAuthCookies(any(), eq("token"), eq(java.time.Duration.ofDays(30)));
     }
 
     @Test
@@ -73,5 +79,15 @@ class AuthControllerTest {
                 .andExpect(status().isOk());
 
         verify(authService).register(any(RegisterRequest.class), eq("203.0.113.10"));
+    }
+
+    @Test
+    void logoutRevokesTheCurrentServerSessionBeforeClearingCookies() throws Exception {
+        mockMvc.perform(post("/auth/logout"))
+                .andExpect(status().isOk());
+
+        verify(authSessionService).revokeCurrent(any());
+        verify(authCookieService).clearAuthCookies(any());
+        verifyNoInteractions(authService);
     }
 }

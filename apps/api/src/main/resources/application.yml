@@ -61,7 +61,9 @@ spring:
       max-file-size: 10MB
       max-request-size: 30MB
 
-# JWT
+# Legacy JWTs keep their original 24-hour validity and are exchanged for
+# opaque PostgreSQL sessions on the first browser request. New logins use the
+# site-configured server-side session lifetime below.
 jwt:
   secret: ${JWT_SECRET}
   expiration: 86400000  # 24 hours

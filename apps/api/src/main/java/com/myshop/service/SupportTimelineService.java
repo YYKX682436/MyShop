@@ -71,6 +71,99 @@ public class SupportTimelineService {
     private record Identity(UUID userId, byte[] guestHash) {}
     private record Thread(UUID id, UUID siteId, UUID userId, byte[] guestHash) {}
 
+    /** Complete root-conversation counts; admin read receipts remain viewer-specific. */
+    @Transactional(readOnly = true)
+    public Map<String, Long> adminAttentionCounts(UUID adminId) {
+        if (adminId == null) return Map.of("total", 0L, "unread", 0L, "pending", 0L);
+        return jdbc.queryForObject("""
+                WITH roots AS (
+                    SELECT id,site_scope,user_id,guest_token_hash
+                    FROM support_conversations WHERE order_id IS NULL
+                ), root_orders AS (
+                    SELECT source.site_scope,source.user_id,source.guest_token_hash,source.order_id
+                    FROM support_conversations source WHERE source.order_id IS NOT NULL
+                    UNION
+                    SELECT source.site_scope,source.user_id,source.guest_token_hash,message.order_id
+                    FROM support_messages message JOIN support_conversations source ON source.id=message.conversation_id
+                    WHERE message.order_id IS NOT NULL
+                    UNION
+                    SELECT source.site_scope,source.user_id,source.guest_token_hash,event.order_id
+                    FROM support_system_events event JOIN support_conversations source ON source.id=event.conversation_id
+                    WHERE event.order_id IS NOT NULL
+                    UNION
+                    SELECT source.site_scope,source.user_id,source.guest_token_hash,request.order_id
+                    FROM support_activity activity JOIN support_conversations source ON source.id=activity.conversation_id
+                    LEFT JOIN after_sale_messages sale_message
+                      ON activity.source_type='AFTER_SALE_MESSAGE' AND sale_message.id=activity.source_id
+                    LEFT JOIN supplier_complaint_events supplier
+                      ON activity.source_type='SUPPLIER_UPDATE' AND supplier.id=activity.source_id
+                    LEFT JOIN supplier_aftercare_operations operation ON operation.id=supplier.operation_id
+                    JOIN after_sale_requests request ON request.id=CASE
+                      WHEN activity.source_type IN ('AFTER_SALE_APPLY','AFTER_SALE_REJECT') THEN activity.source_id
+                      WHEN activity.source_type='AFTER_SALE_MESSAGE' THEN sale_message.request_id
+                      WHEN activity.source_type='SUPPLIER_UPDATE' THEN operation.after_sale_id ELSE NULL END
+                ), unread AS (
+                    SELECT DISTINCT root.id
+                    FROM roots root
+                    JOIN support_conversations source ON source.site_scope=root.site_scope
+                      AND source.user_id IS NOT DISTINCT FROM root.user_id
+                      AND source.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash
+                    JOIN support_activity activity ON activity.conversation_id=source.id
+                    LEFT JOIN support_read_states state ON state.conversation_id=activity.conversation_id
+                      AND state.viewer_type='ADMIN' AND state.viewer_user_id=?
+                    WHERE activity.notify_admin AND NOT activity.legacy
+                      AND activity.seq>coalesce(state.read_seq,0)
+                      AND NOT EXISTS (
+                        SELECT 1 FROM support_activity_receipts receipt
+                        WHERE receipt.conversation_id=activity.conversation_id AND receipt.seq=activity.seq
+                          AND receipt.viewer_type='ADMIN' AND receipt.reader_key=?::uuid
+                      )
+                ), pending_sale AS (
+                    SELECT DISTINCT root.id
+                    FROM roots root
+                    JOIN root_orders linked ON linked.site_scope=root.site_scope
+                      AND linked.user_id IS NOT DISTINCT FROM root.user_id
+                      AND linked.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash
+                    JOIN after_sale_requests request ON request.order_id=linked.order_id
+                    WHERE request.status='PENDING' AND request.waiting_for='ADMIN'
+                ), latest_human_message AS (
+                    SELECT root.id,latest.sender_type
+                    FROM roots root
+                    LEFT JOIN LATERAL (
+                        SELECT CASE activity.source_type
+                            WHEN 'SUPPORT_MESSAGE' THEN message.sender_type
+                            ELSE sale_message.sender_type END AS sender_type
+                        FROM support_conversations source
+                        JOIN support_activity activity ON activity.conversation_id=source.id
+                        LEFT JOIN support_messages message ON activity.source_type='SUPPORT_MESSAGE'
+                          AND message.id=activity.source_id
+                        LEFT JOIN after_sale_messages sale_message ON activity.source_type='AFTER_SALE_MESSAGE'
+                          AND sale_message.id=activity.source_id
+                        LEFT JOIN after_sale_requests sale_request ON sale_request.id=sale_message.request_id
+                        WHERE source.site_scope=root.site_scope
+                          AND source.user_id IS NOT DISTINCT FROM root.user_id
+                          AND source.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash
+                          AND activity.source_type IN ('SUPPORT_MESSAGE','AFTER_SALE_MESSAGE')
+                          AND (activity.source_type='SUPPORT_MESSAGE' OR sale_request.status='PENDING')
+                        ORDER BY activity.seq DESC LIMIT 1
+                    ) latest ON TRUE
+                ), pending AS (
+                    SELECT id FROM pending_sale
+                    UNION
+                    SELECT id FROM latest_human_message WHERE sender_type='CUSTOMER'
+                ), attention AS (
+                    SELECT id FROM unread
+                    UNION SELECT id FROM pending
+                )
+                SELECT
+                    (SELECT count(*) FROM attention) AS total,
+                    (SELECT count(*) FROM unread) AS unread,
+                    (SELECT count(*) FROM pending) AS pending
+                """, (rs, row) -> Map.of(
+                "total", rs.getLong("total"), "unread", rs.getLong("unread"), "pending", rs.getLong("pending")),
+                adminId, adminId);
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> customerSummary(String token) {
         Identity identity = customer(token);
@@ -248,7 +341,7 @@ public class SupportTimelineService {
         List<Map<String, Object>> pendingSales = pendingSales(thread, admin, identity);
         boolean waitingAdmin = pendingSales.stream().anyMatch(row -> "ADMIN".equals(row.get("waiting_for")));
         boolean waitingCustomer = pendingSales.stream().anyMatch(row -> "CUSTOMER".equals(row.get("waiting_for")));
-        boolean lastCustomerMessage = latestSupportSender(thread, admin, identity).map("CUSTOMER"::equals).orElse(false);
+        boolean lastCustomerMessage = latestHumanSender(thread, admin, identity).map("CUSTOMER"::equals).orElse(false);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", thread.id()); row.put("site_id", meta.get("site_id")); row.put("site_name", meta.get("site_name"));
         if (admin) {
@@ -263,7 +356,7 @@ public class SupportTimelineService {
         row.put("preview", latest == null ? "" : preview(latest));
         row.put("unread", unread);
         row.put("waiting_for", waitingAdmin ? "ADMIN" : waitingCustomer ? "CUSTOMER" : null);
-        row.put("needs_attention", waitingAdmin || (pendingSales.isEmpty() && lastCustomerMessage));
+        row.put("needs_attention", waitingAdmin || lastCustomerMessage);
         row.put("pending_after_sales", admin ? pendingSales : List.of());
         return row;
     }
@@ -340,11 +433,17 @@ public class SupportTimelineService {
                         AND receipt.viewer_type='ADMIN' AND receipt.reader_key=?::uuid)
                 ) unread ON true
                 LEFT JOIN LATERAL (
-                  SELECT message.sender_type FROM support_activity activity
+                  SELECT CASE activity.source_type WHEN 'SUPPORT_MESSAGE' THEN message.sender_type
+                             ELSE sale_message.sender_type END AS sender_type
+                  FROM support_activity activity
                   JOIN support_conversations source ON source.id=activity.conversation_id
-                  JOIN support_messages message ON activity.source_type='SUPPORT_MESSAGE' AND message.id=activity.source_id
+                  LEFT JOIN support_messages message ON activity.source_type='SUPPORT_MESSAGE' AND message.id=activity.source_id
+                  LEFT JOIN after_sale_messages sale_message ON activity.source_type='AFTER_SALE_MESSAGE' AND sale_message.id=activity.source_id
+                  LEFT JOIN after_sale_requests sale_request ON sale_request.id=sale_message.request_id
                   WHERE source.site_scope=root.site_scope AND source.user_id IS NOT DISTINCT FROM root.user_id
                     AND source.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash
+                    AND activity.source_type IN ('SUPPORT_MESSAGE','AFTER_SALE_MESSAGE')
+                    AND (activity.source_type='SUPPORT_MESSAGE' OR sale_request.status='PENDING')
                   ORDER BY activity.seq DESC LIMIT 1
                 ) last_message ON true
                 WHERE root.id IN (""" + idParameters + ") AND root.order_id IS NULL",
@@ -437,7 +536,7 @@ public class SupportTimelineService {
             boolean waitingCustomer = pendingSales.stream().anyMatch(sale -> "CUSTOMER".equals(sale.get("waiting_for")));
             boolean lastCustomerMessage = "CUSTOMER".equals(row.remove("_last_support_sender"));
             row.put("waiting_for", waitingAdmin ? "ADMIN" : waitingCustomer ? "CUSTOMER" : null);
-            row.put("needs_attention", waitingAdmin || (pendingSales.isEmpty() && lastCustomerMessage));
+            row.put("needs_attention", waitingAdmin || lastCustomerMessage);
             row.put("pending_after_sales", pendingSales);
             result.add(row);
         }
@@ -621,11 +720,14 @@ public class SupportTimelineService {
                 + scope + activityScope + " AND a.seq<?)", Boolean.class, args.toArray());
     }
 
-    private java.util.Optional<String> latestSupportSender(Thread thread, boolean admin, Identity identity) {
+    private java.util.Optional<String> latestHumanSender(Thread thread, boolean admin, Identity identity) {
         List<Object> args = new ArrayList<>(); String scope = sourceScope(thread, admin, identity, args);
         String activityScope = activityScope(admin, args);
-        List<String> rows = jdbc.query(ACTIVITY_SELECT + " WHERE " + scope + activityScope + " AND a.source_type='SUPPORT_MESSAGE' ORDER BY a.seq DESC LIMIT 1",
-                (rs, n) -> rs.getString("support_sender"), args.toArray());
+        List<String> rows = jdbc.query(ACTIVITY_SELECT + " WHERE " + scope + activityScope
+                        + " AND a.source_type IN ('SUPPORT_MESSAGE','AFTER_SALE_MESSAGE')"
+                        + " AND (a.source_type='SUPPORT_MESSAGE' OR r.status='PENDING') ORDER BY a.seq DESC LIMIT 1",
+                (rs, n) -> "SUPPORT_MESSAGE".equals(rs.getString("source_type"))
+                        ? rs.getString("support_sender") : rs.getString("sale_sender"), args.toArray());
         return rows.stream().findFirst();
     }
 
@@ -692,13 +794,17 @@ public class SupportTimelineService {
             where.append(" AND (EXISTS (SELECT 1 FROM (" + linkedOrders + ") linked_order "
                     + "JOIN after_sale_requests request ON request.order_id=linked_order.order_id "
                     + "WHERE request.status='PENDING' AND request.waiting_for='ADMIN') "
-                    + "OR (NOT EXISTS (SELECT 1 FROM (" + linkedOrders + ") linked_order "
-                    + "JOIN after_sale_requests request ON request.order_id=linked_order.order_id WHERE request.status='PENDING') "
-                    + "AND (SELECT message.sender_type FROM support_activity activity "
+                    + "OR (SELECT CASE activity.source_type WHEN 'SUPPORT_MESSAGE' THEN message.sender_type "
+                    + "ELSE sale_message.sender_type END FROM support_activity activity "
                     + "JOIN support_conversations source ON source.id=activity.conversation_id "
-                    + "JOIN support_messages message ON activity.source_type='SUPPORT_MESSAGE' AND message.id=activity.source_id "
+                    + "LEFT JOIN support_messages message ON activity.source_type='SUPPORT_MESSAGE' AND message.id=activity.source_id "
+                    + "LEFT JOIN after_sale_messages sale_message ON activity.source_type='AFTER_SALE_MESSAGE' AND sale_message.id=activity.source_id "
+                    + "LEFT JOIN after_sale_requests sale_request ON sale_request.id=sale_message.request_id "
                     + "WHERE source.site_scope=root.site_scope AND source.user_id IS NOT DISTINCT FROM root.user_id "
-                    + "AND source.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash ORDER BY activity.seq DESC LIMIT 1)='CUSTOMER')) ");
+                    + "AND source.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash "
+                    + "AND activity.source_type IN ('SUPPORT_MESSAGE','AFTER_SALE_MESSAGE') "
+                    + "AND (activity.source_type='SUPPORT_MESSAGE' OR sale_request.status='PENDING') "
+                    + "ORDER BY activity.seq DESC LIMIT 1)='CUSTOMER') ");
         }
         if ("after_sale".equals(kind)) where.append(" AND EXISTS (SELECT 1 FROM (" + linkedOrders + ") linked_order JOIN after_sale_requests r ON r.order_id=linked_order.order_id) ");
         if ("consultation".equals(kind)) where.append(" AND EXISTS (SELECT 1 FROM support_conversations x JOIN support_messages m ON m.conversation_id=x.id WHERE x.site_scope=root.site_scope AND x.user_id IS NOT DISTINCT FROM root.user_id AND x.guest_token_hash IS NOT DISTINCT FROM root.guest_token_hash) ");

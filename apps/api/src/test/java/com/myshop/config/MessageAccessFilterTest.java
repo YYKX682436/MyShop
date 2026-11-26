@@ -6,7 +6,8 @@ import com.myshop.entity.SiteConfig;
 import com.myshop.entity.User;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
-import com.myshop.utils.JwtUtils;
+import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
@@ -59,7 +60,7 @@ class MessageAccessFilterTest {
         SiteConfig enabled=new SiteConfig(); enabled.setConfigValue("true");
         when(configs.findByConfigKey("maintenance_enabled")).thenReturn(Optional.of(enabled));
         when(configs.findByConfigKey("maintenance_message")).thenReturn(Optional.empty());
-        var filter=new MaintenanceFilter(configs,mock(UserRepository.class),new ObjectMapper(),mock(JwtUtils.class));
+        var filter=new MaintenanceFilter(configs,new ObjectMapper(),new AuthCookieService(false),mock(AuthSessionService.class));
         for (String path : new String[]{"/api/support/conversations", "/api/user/profile", "/api/after-sale-attachments/123", "/api/supplier-complaint-attachments/123"}) {
             var request=new MockHttpServletRequest("GET",path); var response=new MockHttpServletResponse(); var chain=new MockFilterChain();
             filter.doFilter(request,response,chain); assertNotNull(chain.getRequest(),path);

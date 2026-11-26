@@ -13,5 +13,4 @@ public interface AuthService {
 
     AuthResult login(LoginRequest request, String clientIp);
 
-    void logout();
 }

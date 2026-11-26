@@ -7,6 +7,9 @@ import com.myshop.exception.BusinessException;
 import com.myshop.service.SupportService;
 import com.myshop.service.SupportTimelineService;
 import com.myshop.service.AfterSaleService;
+import com.myshop.service.AdminAttentionService;
+import com.myshop.service.AdminOrderService;
+import com.myshop.model.request.AdminOrderSearchRequest;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +24,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -32,6 +36,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -66,6 +71,8 @@ class SupportPostgresIntegrationTest {
     @Autowired SupportService support;
     @Autowired SupportTimelineService timeline;
     @Autowired AfterSaleService afterSales;
+    @Autowired AdminAttentionService attention;
+    @Autowired AdminOrderService adminOrders;
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
     @Autowired PlatformTransactionManager transactionManager;
@@ -212,6 +219,262 @@ class SupportPostgresIntegrationTest {
         assertEquals(20,rows.size());
         assertTrue(rows.stream().anyMatch(row -> "合成消息 0".equals(row.get("preview"))));
         assertTrue(rows.stream().allMatch(row -> row.get("user_id") != null && row.get("latest_at") != null));
+    }
+
+    @Test void attentionCountsCoverAllRootsAndKeepUnreadSeparateFromPendingPerAdministrator() {
+        UUID firstAdmin = UUID.randomUUID(), secondAdmin = UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN'),(?,?,?,'test','ADMIN')",
+                firstAdmin,"attention-admin-"+firstAdmin,firstAdmin+"@example.com",
+                secondAdmin,"attention-admin-"+secondAdmin,secondAdmin+"@example.com");
+        List<UUID> roots = new java.util.ArrayList<>();
+        for (int index = 0; index < 35; index++) {
+            UUID root = (UUID) support.send(null,null,UUID.randomUUID(),"待回复 " + index,List.of(),false,"attention-guest-" + index)
+                    .get("conversation_id");
+            roots.add(root);
+        }
+
+        Map<String,Long> beforeRead = timeline.adminAttentionCounts(firstAdmin);
+        assertEquals(35L, beforeRead.get("total"));
+        assertEquals(35L, beforeRead.get("unread"));
+        assertEquals(35L, beforeRead.get("pending"));
+
+        RequestContext.set(new RequestContext.UserInfo(firstAdmin,"first-admin","ADMIN"));
+        for (UUID root : roots) {
+            List<String> cursors = items(timeline.activities(root,true,null,null,null,40)).stream()
+                    .map(item -> item.get("cursor").toString()).toList();
+            timeline.markRead(root,true,null,cursors);
+        }
+        Map<String,Long> firstRead = timeline.adminAttentionCounts(firstAdmin);
+        Map<String,Long> otherAdmin = timeline.adminAttentionCounts(secondAdmin);
+        assertEquals(0L, firstRead.get("unread"));
+        assertEquals(35L, firstRead.get("pending"));
+        assertEquals(35L, firstRead.get("total"));
+        assertEquals(35L, otherAdmin.get("unread"));
+
+        support.send(roots.getFirst(),null,UUID.randomUUID(),"已回复",List.of(),true,null);
+        Map<String,Long> afterReply = timeline.adminAttentionCounts(firstAdmin);
+        assertEquals(34L, afterReply.get("pending"));
+        assertEquals(34L, afterReply.get("total"));
+    }
+
+    @Test void ordinaryCustomerMessagesStayPendingBesideAnAfterSaleWaitingForCustomer() {
+        UUID buyer = UUID.randomUUID(), admin = UUID.randomUUID(), order = UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,"mixed-attention-"+buyer,buyer+"@example.com",Math.abs((long)buyer.hashCode())+71_000_000L);
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"mixed-attention-admin-"+admin,admin+"@example.com");
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,5,5,'PAID','NORMAL')",order,buyer);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        UUID root = (UUID) support.generalContext(null).get("conversation_id");
+        support.send(root,null,UUID.randomUUID(),"普通咨询先到",List.of(),false,null);
+        UUID sale = UUID.randomUUID();
+        jdbc.update("UPDATE orders SET status='AFTER_SALE' WHERE id=?",order);
+        jdbc.update("""
+                INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at)
+                VALUES (?,?,?,'PENDING','PAID','申请售后处理','CUSTOMER',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """,sale,order,buyer);
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        afterSales.replyFromAdmin(order,"售后已回复",List.of());
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        support.send(root,null,UUID.randomUUID(),"普通咨询又有新消息",List.of(),false,null);
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+
+        Map<String,Long> pending = timeline.adminAttentionCounts(admin);
+        assertEquals(1L,pending.get("pending"));
+        assertEquals(1L,pending.get("unread"));
+        assertTrue(timeline.list(true,null,"main","all",false,true,null,null,0,30)
+                .stream().anyMatch(row -> root.equals(row.get("id"))));
+
+        List<String> cursors=items(timeline.activities(root,true,null,null,null,40)).stream()
+                .map(item -> item.get("cursor").toString()).toList();
+        timeline.markRead(root,true,null,cursors);
+        Map<String,Long> read = timeline.adminAttentionCounts(admin);
+        assertEquals(0L,read.get("unread"));
+        assertEquals(1L,read.get("pending"));
+    }
+
+    @Test void closedAfterSaleMessagesDoNotRemainAsHistoricalCustomerTodos() {
+        UUID buyer=UUID.randomUUID(),admin=UUID.randomUUID(),order=UUID.randomUUID(),sale=UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,"closed-sale-"+buyer,buyer+"@example.com",Math.abs((long)buyer.hashCode())+73_000_000L);
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"closed-sale-admin-"+admin,admin+"@example.com");
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,5,5,'AFTER_SALE','NORMAL')",order,buyer);
+        jdbc.update("""
+                INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at)
+                VALUES (?,?,?,'PENDING','PAID','需要核实的申请','ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                """,sale,order,buyer);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        UUID root=(UUID)support.orderContext(order,null).get("conversation_id");
+        support.replyAfterSale(root,UUID.randomUUID(),"售后补充",order,sale,1,List.of(),false,null);
+
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        afterSales.reject(order,"已完成核实");
+
+        assertEquals(false,timeline.detail(root,true,null).get("needs_attention"));
+        assertEquals(0L,timeline.adminAttentionCounts(admin).get("pending"));
+        assertTrue(timeline.list(true,null,"main","all",false,true,null,null,0,30).stream()
+                .noneMatch(row -> root.equals(row.get("id"))));
+
+        List<String> cursors=items(timeline.activities(root,true,null,null,null,40)).stream()
+                .map(item -> item.get("cursor").toString()).toList();
+        timeline.markRead(root,true,null,cursors);
+        Map<String,Long> cleared=timeline.adminAttentionCounts(admin);
+        assertEquals(0L,cleared.get("unread"));
+        assertEquals(0L,cleared.get("total"));
+    }
+
+    @Test @Transactional
+    void unifiedOrderAttentionDeduplicatesMixedFulfillmentAndHonorsRealInventoryRules() {
+        UUID admin = UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"attention-orders-admin-"+admin,admin+"@example.com");
+        UUID category = UUID.randomUUID();
+        jdbc.update("INSERT INTO product_categories(id,name) VALUES (?,?)",category,"attention fixtures "+category);
+        LocalDateTime now = LocalDateTime.now();
+
+        UUID manualProduct = insertAttentionProduct(category,"manual order line", "MANUAL", false, 10);
+        UUID autoProduct = insertAttentionProduct(category,"auto order line", "CARD_KEY", false, 10);
+        UUID supplierProduct = insertAttentionProduct(category,"supplier order line", "SUPPLIER", false, 10);
+        UUID order = UUID.randomUUID();
+        jdbc.update("INSERT INTO orders(id,total_amount,actual_amount,status,order_type,paid_at) VALUES (?,3,3,'PAID','NORMAL',?)",
+                order,now.minusMinutes(15));
+        insertAttentionOrderItem(order,manualProduct,"MANUAL","MANUAL","WAITING_MANUAL");
+        insertAttentionOrderItem(order,autoProduct,"AUTO","CARD_KEY","PENDING");
+        UUID supplierItem = insertAttentionOrderItem(order,supplierProduct,"AUTO","SUPPLIER","PENDING");
+
+        UUID supplierAccount = UUID.randomUUID();
+        jdbc.update("INSERT INTO supplier_accounts(id,name,provider_type,base_url,app_id,encrypted_secret,enabled) VALUES (?,'attention supplier','test','https://supplier.invalid','app','encrypted',true)", supplierAccount);
+        jdbc.update("""
+                INSERT INTO supplier_purchases(id,order_id,order_item_id,account_id,remote_goods_id,remote_sku,goods_type,
+                  outer_number,buyer_quantity,multiple,actual_quantity,unit_cost,safe_price,attach,recharge_template,status)
+                VALUES (?,?,?,?,?,'',1,?,1,1,1,0,0,'[]'::jsonb,'[]'::jsonb,'BLOCKED')
+                """, UUID.randomUUID(),order,supplierItem,supplierAccount,"remote-"+supplierItem,UUID.randomUUID().toString());
+        UUID staleSupplierItem = insertAttentionOrderItem(order,supplierProduct,"AUTO","SUPPLIER","PENDING");
+        UUID stalePurchase = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO supplier_purchases(id,order_id,order_item_id,account_id,remote_goods_id,remote_sku,goods_type,
+                  outer_number,buyer_quantity,multiple,actual_quantity,unit_cost,safe_price,attach,recharge_template,status,
+                  submit_started_at,last_checked_at)
+                VALUES (?,?,?,?,?,'',1,?,1,1,1,0,0,'[]'::jsonb,'[]'::jsonb,'UNKNOWN',?,?)
+                """, stalePurchase,order,staleSupplierItem,supplierAccount,"remote-"+staleSupplierItem,
+                UUID.randomUUID().toString(),now.minusMinutes(15),now);
+        jdbc.update("""
+                INSERT INTO supplier_aftercare_operations(id,account_id,purchase_id,kind,idempotency_key,operator_id,status,
+                  submitted_at,last_checked_at)
+                VALUES (?,?,?,'REFUND',?,?,'UNKNOWN',?,?)
+                """,UUID.randomUUID(),supplierAccount,stalePurchase,UUID.randomUUID(),admin,now.minusMinutes(15),now);
+
+        UUID buyer = UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true AND enabled=true))",
+                buyer,"attention-sale-buyer-"+buyer,buyer+"@example.com",Math.abs((long)buyer.hashCode())+80_000_000L);
+        UUID afterSaleOrder = UUID.randomUUID(), sale = UUID.randomUUID();
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type,paid_at) VALUES (?,?,1,1,'AFTER_SALE','NORMAL',?)",
+                afterSaleOrder,buyer,now.minusHours(1));
+        jdbc.update("""
+                INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at)
+                VALUES (?,?,?,'PENDING','PAID','需要管理员处理','ADMIN',?,?)
+                """,sale,afterSaleOrder,buyer,now,now);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"attention-sale-buyer","USER"));
+        support.send(null,afterSaleOrder,UUID.randomUUID(),"售后订单咨询",List.of(),false,null);
+
+        UUID stockedCardProduct = insertAttentionProduct(category,"low card stock", "CARD_KEY", true, 3);
+        UUID stockedManualProduct = insertAttentionProduct(category,"low manual stock", "MANUAL", true, 3);
+        UUID disabledProduct = insertAttentionProduct(category,"disabled local product", "MANUAL", false, 3);
+        jdbc.update("INSERT INTO manual_stocks(product_id,available_quantity,reserved_quantity) VALUES (?,2,0)",stockedManualProduct);
+
+        UUID mappingAccount = UUID.randomUUID();
+        jdbc.update("INSERT INTO supplier_accounts(id,name,provider_type,base_url,app_id,encrypted_secret,enabled) VALUES (?,'mapping account','test','https://supplier.invalid','app','encrypted',true)", mappingAccount);
+        UUID configErrorProduct = insertAttentionProduct(category,"mapping config issue", "SUPPLIER", true, 3);
+        UUID transientErrorProduct = insertAttentionProduct(category,"mapping transient issue", "SUPPLIER", true, 3);
+        UUID persistentErrorProduct = insertAttentionProduct(category,"mapping persistent issue", "SUPPLIER", true, 3);
+        insertAttentionMapping(mappingAccount,configErrorProduct,"CONFIG","CONFIG",now);
+        insertAttentionMapping(mappingAccount,transientErrorProduct,"CONNECTION","CONNECTION",now);
+        insertAttentionMapping(mappingAccount,persistentErrorProduct,"CONNECTION","CONNECTION",now.minusMinutes(30),now);
+
+        UUID paymentChannel = UUID.randomUUID(), paymentOrder = UUID.randomUUID(), paymentAttempt = UUID.randomUUID();
+        String channelCode = "attention-"+paymentChannel;
+        jdbc.update("INSERT INTO payment_channels(id,channel_code,channel_name,provider_type,payment_type) VALUES (?,?,'attention channel','epay','alipay')",
+                paymentChannel,channelCode);
+        jdbc.update("INSERT INTO orders(id,total_amount,actual_amount,status,order_type,payment_method,payment_channel_code) VALUES (?,1,1,'PENDING','NORMAL','ONLINE',?)",
+                paymentOrder,channelCode);
+        jdbc.update("""
+                INSERT INTO payment_attempts(id,order_id,channel_id,channel_code_snapshot,provider_type,payment_type,
+                  provider_config_snapshot,merchant_trade_no,amount,status,creation_status)
+                VALUES (?,?,?,?,'epay','alipay','{}',?,1,'PENDING','UNKNOWN')
+                """,paymentAttempt,paymentOrder,paymentChannel,channelCode,"merchant-"+paymentAttempt);
+        jdbc.update("""
+                INSERT INTO webhook_events(event_id,channel_code,order_id,payload,process_result,payment_attempt_id)
+                VALUES (?,?,?,'{}','LATE_PAID_CONFLICT',?)
+                """, "event-"+paymentAttempt,channelCode,paymentOrder,paymentAttempt);
+
+        SiteRequestContext.clear();
+        RequestContext.set(new RequestContext.UserInfo(admin,"attention-orders-admin","ADMIN"));
+        Map<String,Object> defaults = attention.summary();
+        assertEquals(3L, ((Number) defaults.get("orders_total")).longValue());
+        assertEquals(1L, ((Number) defaults.get("manual_fulfillment_orders")).longValue());
+        assertEquals(1L, ((Number) defaults.get("auto_delivery_exception_orders")).longValue());
+        assertEquals(1L, ((Number) defaults.get("supplier_exception_orders")).longValue());
+        assertEquals(1L, ((Number) defaults.get("after_sale_needs_attention")).longValue());
+        assertEquals(1L, ((Number) defaults.get("payment_exception_orders")).longValue());
+        assertEquals(2L, ((Number) defaults.get("supplier_needs_attention")).longValue());
+        assertEquals(0L, ((Number) defaults.get("low_stock_products")).longValue());
+
+        jdbc.update("UPDATE site_configs SET config_value='true' WHERE config_key='low_stock_attention_enabled'");
+        Map<String,Object> enabled = attention.summary();
+        assertEquals(2L, ((Number) enabled.get("low_stock_products")).longValue());
+        assertEquals(2L, ((Number) enabled.get("supplier_needs_attention")).longValue());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM products WHERE id=? AND is_enabled=false",Integer.class,disabledProduct).intValue());
+
+        assertAttentionFilter("AFTER_SALE",afterSaleOrder);
+        assertAttentionFilter("MANUAL_FULFILLMENT",order);
+        assertAttentionFilter("AUTO_DELIVERY_EXCEPTION",order);
+        assertAttentionFilter("SUPPLIER_EXCEPTION",order);
+        assertAttentionFilter("PAYMENT_EXCEPTION",paymentOrder);
+
+        jdbc.update("INSERT INTO operation_logs(user_id,username,action,target_type,target_id,detail,ip_address) VALUES (?,'admin','order.payment_review','ORDER',?,?, '127.0.0.1')",
+                admin,paymentOrder.toString(),"支付记录 "+paymentAttempt+"：已核实");
+        Map<String,Object> reviewedPayment = attention.summary();
+        assertEquals(2L, ((Number) reviewedPayment.get("orders_total")).longValue());
+        assertEquals(0L, ((Number) reviewedPayment.get("payment_exception_orders")).longValue());
+        var clearedFilter = adminOrders.searchOrders(new AdminOrderSearchRequest(1,20,null,null,null,null,"desc","PAYMENT_EXCEPTION"));
+        assertEquals(0L,clearedFilter.getPagination().getTotal());
+    }
+
+    private UUID insertAttentionProduct(UUID category, String title, String stockMode, boolean enabled, int threshold) {
+        UUID product = UUID.randomUUID();
+        jdbc.update("INSERT INTO products(id,title,base_price,category_id,stock_mode,is_enabled,low_stock_threshold) VALUES (?,?,1,?,?,?,?)",
+                product,title,category,stockMode,enabled,threshold);
+        return product;
+    }
+
+    private UUID insertAttentionOrderItem(UUID order, UUID product, String delivery, String stockMode, String fulfillment) {
+        UUID item = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO order_items(id,order_id,product_id,product_title,quantity,unit_price,subtotal,delivery_type,
+                  stock_mode,fulfillment_status,cost_price_snapshot,retail_price_snapshot,pricing_source)
+                VALUES (?,?,?, 'Attention fixture',1,1,1,?,?,?,1,1,'RETAIL')
+                """, item,order,product,delivery,stockMode,fulfillment);
+        return item;
+    }
+
+    private void insertAttentionMapping(UUID account, UUID product, String remote, String error, LocalDateTime now) {
+        insertAttentionMapping(account,product,remote,error,now,now);
+    }
+
+    private void insertAttentionMapping(UUID account, UUID product, String remote, String error,
+                                        LocalDateTime lastSynced, LocalDateTime lastAttempt) {
+        jdbc.update("""
+                INSERT INTO supplier_product_mappings(account_id,remote_goods_id,remote_sku,product_id,goods_type,sku_type,
+                  cost,stock,goods_status,sku_status,multiple,min_quantity,max_quantity,snapshot,last_synced_at,last_attempt_at,sync_error)
+                VALUES (?,?, '', ?,1,1,0,0,1,1,1,0,0,'{}'::jsonb,?,?,?)
+                """,account,remote,product,lastSynced,lastAttempt,error);
+    }
+
+    private void assertAttentionFilter(String filter, UUID expectedOrder) {
+        var result=adminOrders.searchOrders(new AdminOrderSearchRequest(1,20,null,null,null,null,"desc",filter));
+        assertEquals(1L,result.getPagination().getTotal(),filter);
+        assertEquals(expectedOrder,((Map<?,?>)result.getList().getFirst()).get("id"),filter);
     }
 
     @Test void imageOnlyConsultationIsPendingAndHasAnImagePreview() {

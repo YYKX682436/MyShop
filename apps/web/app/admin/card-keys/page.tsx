@@ -32,6 +32,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { invalidateAdminData, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { formatCardContents } from "@/lib/card-display"
 import { formatDateTime, stripInvisible } from "@/lib/utils"
@@ -456,6 +457,7 @@ export default function AdminCardKeysPage() {
         quantity: pickupQuantityNumber,
       }))
       invalidateAdminData("products")
+      invalidateAdminAttention()
       setBatchPickupDialogOpen(false)
       resetBatchPickup()
       setPickupResult(result)
@@ -476,6 +478,7 @@ export default function AdminCardKeysPage() {
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.pickup(singlePickupTarget.id))
       invalidateAdminData("products")
+      invalidateAdminAttention()
       setSinglePickupTarget(null)
       setPickupResult(result)
       await refreshCardKeyData()
@@ -498,6 +501,7 @@ export default function AdminCardKeysPage() {
     try {
       await requestOrThrow(() => adminCardKeyApi.invalidate(singleInvalidateTarget.id))
       invalidateAdminData("products")
+      invalidateAdminAttention()
       toast.success(t("admin.keyInvalidated"))
       setSingleInvalidateTarget(null)
       if (detailItem) await fetchDetailKeys(detailItem, detailPage)
@@ -515,6 +519,7 @@ export default function AdminCardKeysPage() {
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.batchInvalidate({ product_id: batchInvalidateTarget.product_id, spec_id: batchInvalidateTarget.spec_id }))
       invalidateAdminData("products")
+      invalidateAdminAttention()
       toast.success(t("admin.keysInvalidated").replace("{count}", String(result.invalidated_count)))
       setBatchInvalidateTarget(null)
       await refreshCardKeyData()

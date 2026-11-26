@@ -188,7 +188,7 @@ class AdminOrderServiceImplTest {
                 new BigDecimal("20.00"), new BigDecimal("30.00"), 1);
         OrderItem guestItem = item(guestOrderId, new BigDecimal("10.00"),
                 new BigDecimal("4.00"), new BigDecimal("10.00"), 2);
-        when(orderRepository.searchAdminOrders(isNull(), isNull(), isNull(), isNull(),
+        when(orderRepository.searchAdminOrders(isNull(), isNull(), any(), isNull(), isNull(), isNull(),
                 org.mockito.ArgumentMatchers.eq("desc"), any()))
                 .thenReturn(new PageImpl<>(List.of(registeredOrder, guestOrder),
                         PageRequest.of(0, 20), 2));
@@ -236,7 +236,7 @@ class AdminOrderServiceImplTest {
         UUID orderId = UUID.randomUUID();
         Order order = order(orderId, UUID.randomUUID());
         order.setStatus(OrderStatus.AFTER_SALE);
-        when(orderRepository.searchAdminOrders(eq("AFTER_SALE"), isNull(), isNull(), isNull(),
+        when(orderRepository.searchAdminOrders(eq("AFTER_SALE"), isNull(), any(), isNull(), isNull(), isNull(),
                 eq("desc"), any()))
                 .thenReturn(new PageImpl<>(List.of(order), PageRequest.of(0, 20), 1));
         when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of());
@@ -253,13 +253,27 @@ class AdminOrderServiceImplTest {
         assertEquals(OrderStatus.AFTER_SALE.name(), ((Map<?, ?>) result.getList().get(0)).get("status"));
         assertEquals(summary, ((Map<?, ?>) result.getList().get(0)).get("after_sale"));
         verify(afterSaleService).buildOrderSummaries(List.of(orderId));
-        verify(orderRepository).searchAdminOrders(eq("AFTER_SALE"), isNull(), isNull(), isNull(),
+        verify(orderRepository).searchAdminOrders(eq("AFTER_SALE"), isNull(), any(), isNull(), isNull(), isNull(),
                 eq("desc"), any());
     }
 
     @Test
+    void searchAcceptsTheManualPaymentAttentionFilter() {
+        when(orderRepository.searchAdminOrders(isNull(), eq("PAYMENT_EXCEPTION"), any(), isNull(), isNull(), isNull(),
+                eq("desc"), any()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        var result = fullService().searchOrders(
+                new AdminOrderSearchRequest(1, 20, null, null, null, null, null, "PAYMENT_EXCEPTION"));
+
+        assertEquals(0L, result.getPagination().getTotal());
+        verify(orderRepository).searchAdminOrders(isNull(), eq("PAYMENT_EXCEPTION"), any(), isNull(), isNull(), isNull(),
+                eq("desc"), eq(PageRequest.of(0, 20)));
+    }
+
+    @Test
     void adminSearchPassesBusinessOrderNumberAsTheIdentityKeyword() {
-        when(orderRepository.searchAdminOrders(isNull(), isNull(), isNull(),
+        when(orderRepository.searchAdminOrders(isNull(), isNull(), any(), isNull(), isNull(),
                 org.mockito.ArgumentMatchers.eq("%1000000001%"),
                 org.mockito.ArgumentMatchers.eq("desc"), any()))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
@@ -268,7 +282,7 @@ class AdminOrderServiceImplTest {
                 new AdminOrderSearchRequest(1, 20, "1000000001", null, null, null, null));
 
         assertEquals(0L, result.getPagination().getTotal());
-        verify(orderRepository).searchAdminOrders(isNull(), isNull(), isNull(),
+        verify(orderRepository).searchAdminOrders(isNull(), isNull(), any(), isNull(), isNull(),
                 org.mockito.ArgumentMatchers.eq("%1000000001%"),
                 org.mockito.ArgumentMatchers.eq("desc"),
                 org.mockito.ArgumentMatchers.eq(PageRequest.of(0, 20)));

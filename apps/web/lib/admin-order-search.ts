@@ -8,6 +8,7 @@ export interface AdminOrderSearchParams {
   created_from?: string
   created_to?: string
   sort_direction?: AdminOrderSearchSortDirection
+  attention_filter?: string
 }
 
 /** Build the JSON-only request body used by the global admin order search. */
@@ -20,5 +21,6 @@ export function buildAdminOrderSearchBody(params: AdminOrderSearchParams = {}) {
     created_from: params.created_from || undefined,
     created_to: params.created_to || undefined,
     sort_direction: params.sort_direction ?? "desc" as const,
+    attention_filter: params.attention_filter?.trim() || undefined,
   }
 }

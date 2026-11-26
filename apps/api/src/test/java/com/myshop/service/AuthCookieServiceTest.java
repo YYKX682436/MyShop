@@ -3,6 +3,7 @@ package com.myshop.service;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletResponse;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,7 +32,7 @@ class AuthCookieServiceTest {
     void writingKeepsAccessCookieHttpOnlyAndCreatesCsrfCookieSeparately() {
         MockHttpServletResponse response = new MockHttpServletResponse();
 
-        new AuthCookieService(true).writeAuthCookies(response, "token-value");
+        new AuthCookieService(true).writeAuthCookies(response, "token-value", Duration.ofDays(30));
 
         List<String> cookies = response.getHeaders("Set-Cookie");
         assertEquals(2, cookies.size());

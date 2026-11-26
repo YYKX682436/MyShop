@@ -33,7 +33,7 @@ try {
     const method = route.request().method()
     if (path === "/api/user/profile") return route.fulfill(ok({ id: "local-admin", username: "admin", role: "SUPER_ADMIN", balance: 0 }))
     if (path === "/api/site/config") return route.fulfill(ok({}))
-    if (path === "/api/admin/attention") return route.fulfill(ok({ after_sale_needs_attention: 0 }))
+    if (path === "/api/admin/attention-summary") return route.fulfill(ok({ after_sale_needs_attention: 0, total: 0 }))
     if (path === "/api/admin/categories") return route.fulfill(ok([{ id: "local-category", name: "本地分类", parent_id: null, children: [] }]))
     if (path === "/api/admin/products" && method === "GET") return route.fulfill(ok({ list: [local], total: 1, page: 1, page_size: 30 }))
     if (path === "/api/admin/products/manual-product") return route.fulfill(ok(local))

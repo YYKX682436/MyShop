@@ -87,13 +87,19 @@ function assertMessageIdentity(path: string, viewer: string, token: string | nul
 
 class ApiError extends Error {
   code: number
+  status: number
   params?: Record<string, string | number | boolean>
-  constructor(code: number, message: string, params?: Record<string, string | number | boolean>) {
+  constructor(code: number, message: string, params?: Record<string, string | number | boolean>, status = code) {
     super(message)
     this.code = code
+    this.status = status
     this.params = params
     this.name = "ApiError"
   }
+}
+
+export function isUnauthorizedApiError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.code === 10002)
 }
 
 export function getHomeSiteFromError(error: unknown): unknown {
@@ -277,7 +283,7 @@ async function request<T>(
       handleUnauthorized()
     }
     const body = await res.json().catch(() => ({ code: res.status, message: res.statusText }))
-    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params)
+    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params, res.status)
   }
 
   const body: ApiResponse<T> = await res.json()
@@ -319,7 +325,7 @@ async function uploadRequest<T>(path: string, formData: FormData, redirectOnUnau
       handleUnauthorized()
     }
     const body = await res.json().catch(() => ({ code: res.status, message: res.statusText }))
-    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params)
+    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params, res.status)
   }
 
   const body: ApiResponse<T> = await res.json()
@@ -341,7 +347,7 @@ async function requestText(path: string): Promise<string> {
   if (!res.ok) {
     if (res.status === 401) handleUnauthorized()
     const body = await res.json().catch(() => ({ code: res.status, message: res.statusText }))
-    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params)
+    throw new ApiError(body.code || res.status, body.message || res.statusText, body.params, res.status)
   }
   return res.text()
 }
@@ -517,8 +523,8 @@ export const authApi = {
 // ============================================================
 
 export const userApi = {
-  getProfile: () =>
-    request<UserProfile>("/user/profile"),
+  getProfile: (signal?: AbortSignal) =>
+    request<UserProfile>("/user/profile", { signal }),
   updatePassword: (data: { old_password: string; new_password: string }) =>
     request<null>("/user/password", { method: "PUT", body: JSON.stringify(data) }),
   uploadAvatar: (file: File) => {

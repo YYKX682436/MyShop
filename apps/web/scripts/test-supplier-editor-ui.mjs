@@ -22,7 +22,7 @@ try {
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname, method = route.request().method()
     if (path === "/api/user/profile") return route.fulfill(ok({ id: "admin", username: "admin", role: "SUPER_ADMIN", balance: 0 }))
-    if (path === "/api/site/config" || path === "/api/admin/attention") return route.fulfill(ok({}))
+    if (path === "/api/site/config" || path === "/api/admin/attention-summary") return route.fulfill(ok({}))
     if (path === "/api/admin/categories") return route.fulfill(ok([{ id: "category", name: "测试分类", parent_id: null, children: [] }]))
     if (path === "/api/admin/user-levels") return route.fulfill(ok([]))
     if (path === "/api/admin/products/pricing-preview") return route.fulfill(ok({ pricing_matrix: [], warnings: [] }))

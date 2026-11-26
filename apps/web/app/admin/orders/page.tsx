@@ -28,12 +28,21 @@ import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { getAfterSaleWaitingLabelKey } from "@/lib/after-sale-waiting"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
-import type { AdminOrderItem, OrderStatus } from "@/types"
+import type { AdminAttentionSummary, AdminOrderItem, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
 
 const PAGE_SIZE = 20
 type TimeRange = "all" | "today" | "yesterday" | "7d" | "30d" | "custom"
 type OrderTab = "ALL" | OrderStatus
+type OrderAttentionFilter = "AFTER_SALE" | "MANUAL_FULFILLMENT" | "SUPPLIER_EXCEPTION" | "AUTO_DELIVERY_EXCEPTION" | "PAYMENT_EXCEPTION"
+
+const ORDER_ATTENTION_FILTERS: { value: OrderAttentionFilter; label: TranslationKey; countKey: keyof AdminAttentionSummary }[] = [
+  { value: "AFTER_SALE", label: "admin.todoAfterSale", countKey: "after_sale_needs_attention" },
+  { value: "MANUAL_FULFILLMENT", label: "admin.todoManualFulfillment", countKey: "manual_fulfillment_orders" },
+  { value: "SUPPLIER_EXCEPTION", label: "admin.todoSupplierException", countKey: "supplier_exception_orders" },
+  { value: "AUTO_DELIVERY_EXCEPTION", label: "admin.todoAutoDeliveryException", countKey: "auto_delivery_exception_orders" },
+  { value: "PAYMENT_EXCEPTION", label: "admin.todoPaymentException", countKey: "payment_exception_orders" },
+]
 
 const ORDER_STATUS_TABS: { value: OrderTab; label: TranslationKey }[] = [
   { value: "ALL", label: "admin.orderTabAll" },
@@ -96,7 +105,7 @@ function ProductSummary({ order, emptyLabel }: { order: AdminOrderItem; emptyLab
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
   const orderInvalidationRevision = useAdminOrderInvalidation()
-  const { afterSaleNeedsAttention, refresh: refreshAttention } = useAdminAttention()
+  const { afterSaleNeedsAttention, summary: attention, refresh: refreshAttention } = useAdminAttention()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -104,6 +113,7 @@ export default function AdminOrdersPage() {
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<OrderTab>("ALL")
+  const [attentionFilter, setAttentionFilter] = useState<OrderAttentionFilter | "">("")
   const [timeRange, setTimeRange] = useState<TimeRange>("all")
   const [customFrom, setCustomFrom] = useState("")
   const [customTo, setCustomTo] = useState("")
@@ -130,6 +140,7 @@ export default function AdminOrdersPage() {
         page,
         page_size: PAGE_SIZE,
         status: statusFilter === "ALL" ? undefined : statusFilter,
+        attention_filter: attentionFilter || undefined,
         keyword: debouncedSearch || undefined,
         ...bounds,
         sort_direction: sortDirection,
@@ -147,7 +158,7 @@ export default function AdminOrdersPage() {
     } finally {
       if (current()) setLoading(false)
     }
-  }, [bounds, debouncedSearch, page, sortDirection, statusFilter, startRequest])
+  }, [attentionFilter, bounds, debouncedSearch, page, sortDirection, statusFilter, startRequest])
 
   useEffect(() => { void loadOrders() }, [loadOrders, orderInvalidationRevision])
   const refreshPage = useCallback(async () => {
@@ -185,7 +196,7 @@ export default function AdminOrdersPage() {
               type="button"
               aria-pressed={statusFilter === tab.value}
               data-active={statusFilter === tab.value}
-              onClick={() => { setStatusFilter(tab.value); setPage(1) }}
+              onClick={() => { setStatusFilter(tab.value); setAttentionFilter(""); setPage(1) }}
               className="segmented-control-item inline-flex items-center whitespace-nowrap"
             >
               {t(tab.label)}
@@ -201,6 +212,18 @@ export default function AdminOrdersPage() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="flex max-w-full flex-wrap gap-2" aria-label="待办筛选">
+        {ORDER_ATTENTION_FILTERS.map((filter) => {
+          const count = attention[filter.countKey]
+          return <button key={filter.value} type="button" aria-pressed={attentionFilter === filter.value}
+            onClick={() => { setAttentionFilter(current => current === filter.value ? "" : filter.value); setStatusFilter("ALL"); setPage(1) }}
+            className={`inline-flex min-h-9 items-center gap-1.5 rounded-control border px-3 text-xs transition-colors ${attentionFilter === filter.value ? "border-primary bg-primary/10 text-primary" : "border-border-subtle text-muted-foreground hover:bg-surface-muted"}`}>
+            {t(filter.label)}
+            {count > 0 && <span className="inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-destructive-foreground">{count > 99 ? "99+" : count}</span>}
+          </button>
+        })}
       </div>
 
       <PageToolbar>

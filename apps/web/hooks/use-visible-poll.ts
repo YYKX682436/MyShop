@@ -43,6 +43,7 @@ export function useVisiblePoll(task: (signal: AbortSignal) => Promise<void>, ena
       else resumeRequested = true
     }
     document.addEventListener("visibilitychange", onVisibility)
+    window.addEventListener("focus", onVisibility)
     window.addEventListener("online", onVisibility)
     window.addEventListener("offline", onVisibility)
     window.addEventListener("myshop:messages-changed", onVisibility)
@@ -52,6 +53,7 @@ export function useVisiblePoll(task: (signal: AbortSignal) => Promise<void>, ena
       if (timer) clearTimeout(timer)
       controller?.abort()
       document.removeEventListener("visibilitychange", onVisibility)
+      window.removeEventListener("focus", onVisibility)
       window.removeEventListener("online", onVisibility)
       window.removeEventListener("offline", onVisibility)
       window.removeEventListener("myshop:messages-changed", onVisibility)

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { SupplierPicker, type SupplierSelection } from "@/components/admin/suppliers/supplier-picker"
 import { useAuth } from "@/lib/context"
+import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { adminCategoryApi, adminProductApi, adminSupplierApi, type SupplierAccount, type SupplierAccountInput, type SupplierCategory, type SupplierMapping, type SupplierProduct, type SupplierSummary } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
 
@@ -127,6 +128,7 @@ export default function SuppliersPage() {
     event.preventDefault(); setBusy(true)
     try {
       const saved = editing ? await adminSupplierApi.update(editing, form) : await adminSupplierApi.create(form)
+      invalidateAdminAttention()
       closeAccount(); await loadAccounts(); choose(saved.id); toast.success("货源账号已保存")
     } catch (error) { toast.error(message(error)) }
     finally { setBusy(false) }
@@ -135,7 +137,7 @@ export default function SuppliersPage() {
     if (!active) return
     if (!window.confirm(active.enabled ? `停用 ${active.name} 后将停止新采购，确定继续？` : `确定启用 ${active.name}？`)) return
     setBusy(true)
-    try { await adminSupplierApi.status(active.id, !active.enabled); setBalance(null); await loadAccounts(); toast.success(active.enabled ? "货源已停用" : "货源已启用") }
+    try { await adminSupplierApi.status(active.id, !active.enabled); invalidateAdminAttention(); setBalance(null); await loadAccounts(); toast.success(active.enabled ? "货源已停用" : "货源已启用") }
     catch (error) { toast.error(message(error)) } finally { setBusy(false) }
   }
   async function testConnection() {
@@ -170,7 +172,7 @@ export default function SuppliersPage() {
     const id = active.id; setBusy(true)
     try {
       const result = await adminSupplierApi.import(id, detail.id, localCategory)
-      if (selectedRef.current === id) { await loadMappings(id); setResultProduct(result.product_id); toast.success(result.created ? "已导入，下架待配置" : "该商品已导入") }
+      if (selectedRef.current === id) { await loadMappings(id); invalidateAdminAttention(); setResultProduct(result.product_id); toast.success(result.created ? "已导入，下架待配置" : "该商品已导入") }
     } catch (error) { if (selectedRef.current === id) toast.error(message(error)) } finally { setBusy(false) }
   }
   async function searchLocal() {
@@ -201,7 +203,7 @@ export default function SuppliersPage() {
     const id=active.id; setBusy(true)
     try {
       const result=await adminSupplierApi.bind(id,detail.id,{ product_id: targetProduct.id, spec_id: targetSpec || null, remote_sku: remoteSku, confirmed: true, move_confirmed: moving, expected_target_mapping_id: target?.id || null, expected_source_mapping_id: source?.id || null, expected_source_product_id: source?.product_id || null, expected_source_spec_id: source?.spec_id || null })
-      if (selectedRef.current===id) { await loadMappings(id); setTargetMappings(await adminSupplierApi.productMappings(targetProduct.id)); setResultProduct(result.product_id); toast.success("货源绑定已保存") }
+      if (selectedRef.current===id) { await loadMappings(id); setTargetMappings(await adminSupplierApi.productMappings(targetProduct.id)); invalidateAdminAttention(); setResultProduct(result.product_id); toast.success("货源绑定已保存") }
     } catch (error) { if (selectedRef.current===id) toast.error(message(error)) } finally { setBusy(false) }
   }
   async function syncPresentation(row: SupplierMapping) {
@@ -213,14 +215,14 @@ export default function SuppliersPage() {
   async function sync(goodsId: string) {
     if (!active) return
     const id = active.id; setBusy(true)
-    try { await adminSupplierApi.sync(id, goodsId); if (selectedRef.current === id) toast.success("同步完成") }
+    try { await adminSupplierApi.sync(id, goodsId); if (selectedRef.current === id) { invalidateAdminAttention(); toast.success("同步完成") } }
     catch (error) { if (selectedRef.current === id) toast.error(message(error)) }
     finally { if (selectedRef.current === id) await loadMappings(id); setBusy(false) }
   }
   async function unbind(row: SupplierMapping) {
     if (!active || !window.confirm(`解除「${row.product_name || "本地商品"}」的货源关联？未删除的商品将下架。`)) return
     setBusy(true)
-    try { await adminSupplierApi.unbind(row.account_id,row.id); await loadMappings(active.id); toast.success("货源关联已解除") }
+    try { await adminSupplierApi.unbind(row.account_id,row.id); await loadMappings(active.id); invalidateAdminAttention(); toast.success("货源关联已解除") }
     catch (error) { toast.error(message(error)) } finally { setBusy(false) }
   }
   async function replaceSource(row: SupplierMapping, selection: SupplierSelection) {
@@ -233,6 +235,7 @@ export default function SuppliersPage() {
         confirmed:true,move_confirmed:moving,expected_target_mapping_id:row.id,expected_source_mapping_id:source?.id || null,
         expected_source_product_id:source?.product_id || null,expected_source_spec_id:source?.spec_id || null})
       if (active) await loadMappings(active.id)
+      invalidateAdminAttention()
       toast.success("货源已更换")
     } catch (error) { toast.error(message(error)) } finally { setBusy(false) }
   }

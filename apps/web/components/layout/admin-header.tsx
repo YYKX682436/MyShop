@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { useAuth, useLocale, useTheme } from "@/lib/context"
+import { useAdminAttention } from "@/lib/admin-attention"
 import type { TranslationKey } from "@/lib/i18n"
 
 function getPageLabel(pathname: string): TranslationKey {
@@ -50,6 +51,8 @@ export function AdminHeader() {
   const { locale, setLocale, t } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
   const { user, logout } = useAuth()
+  const { total: attentionTotal } = useAdminAttention()
+  const attentionLabel = attentionTotal > 99 ? "99+" : String(attentionTotal)
   const toggleLocale = () => setLocale(locale === "zh" ? "en" : "zh")
   const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark")
   const handleLogout = () => { void logout().then(() => router.push("/")).catch(() => toast.error("退出失败，请重试")) }
@@ -58,7 +61,10 @@ export function AdminHeader() {
     <div className="admin-header-layer">
       <header className="admin-floating-toolbar static-material">
         <div className="admin-toolbar-leading">
-          <SidebarTrigger className="h-11 w-11 shrink-0 rounded-control md:h-7 md:w-7" aria-label={t("admin.toggleSidebar")} />
+          <span className="relative inline-flex shrink-0">
+            <SidebarTrigger className="h-11 w-11 rounded-control md:h-7 md:w-7" aria-label={t("admin.toggleSidebar")} />
+            {attentionTotal > 0 && <span role="status" aria-label={`${t("admin.totalAttention")}: ${attentionLabel}`} className="absolute -right-1 -top-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold leading-none text-destructive-foreground md:hidden">{attentionLabel}</span>}
+          </span>
           <div className="hidden min-w-0 flex-col gap-0.5 md:flex">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{t("admin.adminHome")}</span>
             <span className="truncate text-[15px] font-semibold">{t(getPageLabel(pathname))}</span>

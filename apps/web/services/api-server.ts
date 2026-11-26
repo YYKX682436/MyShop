@@ -33,7 +33,10 @@ async function serverRequest<T>(path: string, accessToken?: string): Promise<T> 
   // Preserve the validated storefront host for the API's site resolution.
   headers.Host = new URL(await requestSiteUrl()).host
   // Forward only the authentication cookie; unrelated browser cookies stay private.
-  if (accessToken) headers.Cookie = `myshop_access_token=${accessToken}`
+  if (accessToken) {
+    headers.Cookie = `myshop_access_token=${accessToken}`
+    headers["X-MyShop-SSR"] = "true"
+  }
   // Node's fetch rewrites Host to the backend URL, even when a Host header is
   // supplied. The native HTTP client preserves the validated storefront host.
   const res = await getServerHttpResponse(`${BACKEND_URL}/api${path}`, headers)

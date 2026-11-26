@@ -3,13 +3,8 @@ package com.myshop.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.common.ApiResponse;
 import com.myshop.constant.ErrorCode;
-import com.myshop.entity.User;
-import com.myshop.repository.UserRepository;
 import com.myshop.repository.SiteConfigRepository;
-import com.myshop.utils.JwtUtils;
-import io.jsonwebtoken.Claims;
 import jakarta.servlet.*;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -17,10 +12,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
+import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 
 import java.io.IOException;
-import java.util.UUID;
 
 @Slf4j
 @Component
@@ -29,9 +24,9 @@ import java.util.UUID;
 public class MaintenanceFilter implements Filter {
 
     private final SiteConfigRepository siteConfigRepository;
-    private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
-    private final JwtUtils jwtUtils;
+    private final AuthCookieService cookies;
+    private final AuthSessionService sessions;
 
     // Cache: maintenance mode, refresh every 30s
     private volatile boolean cachedMaintenanceEnabled = false;
@@ -88,38 +83,13 @@ public class MaintenanceFilter implements Filter {
         chain.doFilter(request, response);
     }
 
-    /**
-     * Check if the request carries a valid JWT with either administrator role.
-     */
+    /** Check the same persisted session authority used by the security filter. */
     private boolean isAdminRequest(HttpServletRequest request) {
         try {
-            if (request.getCookies() == null) return false;
-            for (Cookie cookie : request.getCookies()) {
-                if (!"myshop_access_token".equals(cookie.getName()) || !StringUtils.hasText(cookie.getValue())) {
-                    continue;
-                }
-                Claims claims = jwtUtils.parseTokenSafe(cookie.getValue());
-                if (claims == null) return false;
-                String role = claims.get("role", String.class);
-                Integer authVersion = authVersion(claims.get("authVersion"));
-                UUID userId = UUID.fromString(claims.getSubject());
-                if (authVersion == null) return false;
-                User user = userRepository.findById(userId).orElse(null);
-                return user != null && user.getIsDeleted() == 0
-                        && user.getAuthVersion() == authVersion
-                        && user.getRole().name().equals(role)
-                        && ("ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
-            }
-            return false;
+            return sessions.isAdministratorCredential(cookies.getAccessToken(request));
         } catch (Exception e) {
             return false;
         }
-    }
-
-    private Integer authVersion(Object value) {
-        if (!(value instanceof Number number)) return null;
-        long candidate = number.longValue();
-        return candidate < Integer.MIN_VALUE || candidate > Integer.MAX_VALUE ? null : (int) candidate;
     }
 
     private void refreshCache() {

@@ -15,7 +15,6 @@ import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AuthService;
 import com.myshop.utils.CaptchaUtils;
-import com.myshop.utils.JwtUtils;
 import com.myshop.validation.RegistrationRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,7 +42,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final UserLevelRepository userLevelRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtUtils jwtUtils;
+    private final com.myshop.service.AuthSessionService authSessions;
     private final CaptchaUtils captchaUtils;
 
     @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
@@ -139,9 +138,8 @@ public class AuthServiceImpl implements AuthService {
         recordSuccessfulLogin(user, clientIp);
         userRepository.saveAndFlush(user);
 
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name(),
-                user.getAuthVersion());
-        return new AuthResult(token, UserProfileResponse.from(user, defaultLevel));
+        var credential = authSessions.create(user);
+        return new AuthResult(credential.value(), UserProfileResponse.from(user, defaultLevel), credential.lifetimeDays());
     }
 
     @Override
@@ -191,15 +189,8 @@ public class AuthServiceImpl implements AuthService {
 
         UserLevel currentLevel = user.getRole() == UserRole.USER && user.getUserLevelId() != null
                 ? userLevelRepository.findById(user.getUserLevelId()).orElse(null) : null;
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name(),
-                user.getAuthVersion());
-        return new AuthResult(token, UserProfileResponse.from(user, currentLevel));
-    }
-
-    @Override
-    public void logout() {
-        // Stateless JWT - client discards token
-        log.debug("User logged out");
+        var credential = authSessions.create(user);
+        return new AuthResult(credential.value(), UserProfileResponse.from(user, currentLevel), credential.lifetimeDays());
     }
 
     private String normalizeEmail(String email) {

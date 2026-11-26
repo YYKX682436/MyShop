@@ -90,6 +90,35 @@ class SiteConfigServiceImplTest {
     }
 
     @Test
+    void loginDurationOnlyAcceptsTheFourSupportedSlidingIntervals() {
+        when(repository.findByConfigKey(anyString())).thenReturn(Optional.empty());
+        when(repository.saveAndFlush(any(SiteConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        for (String days : List.of("15", "30", "90", "365")) {
+            service.updateConfigs(List.of(config("login_duration_days", days)));
+            verify(repository).saveAndFlush(org.mockito.ArgumentMatchers.argThat(saved ->
+                    "login_duration_days".equals(saved.getConfigKey()) && days.equals(saved.getConfigValue())));
+        }
+
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("login_duration_days", "14"))));
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("login_duration_days", "forever"))));
+    }
+
+    @Test
+    void lowStockReminderSettingOnlyAcceptsBooleanValues() {
+        when(repository.findByConfigKey(anyString())).thenReturn(Optional.empty());
+        when(repository.saveAndFlush(any(SiteConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.updateConfigs(List.of(config("low_stock_attention_enabled", "true")));
+        verify(repository).saveAndFlush(org.mockito.ArgumentMatchers.argThat(saved ->
+                "low_stock_attention_enabled".equals(saved.getConfigKey()) && "true".equals(saved.getConfigValue())));
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("low_stock_attention_enabled", "yes"))));
+    }
+
+    @Test
     void publicTurnstileStateStaysDisabledWhenKeysAreIncomplete() {
         org.mockito.Mockito.lenient().when(repository.findByConfigKey("turnstile_enabled"))
                 .thenReturn(Optional.of(configValue("true")));

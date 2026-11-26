@@ -105,6 +105,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setRefreshingSupplier(purchaseId)
     try {
       await requestOrThrow(() => adminOrderApi.refreshSupplier(orderId, purchaseId))
+      invalidateAdminAttention()
       await load()
     } catch (error) { toast.error(error instanceof Error ? error.message : "查询失败") }
     finally { setRefreshingSupplier(null) }
@@ -112,11 +113,13 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   const reviewSupplier = async (purchaseId: string, outcome: string) => {
     await requestOrThrow(() => adminOrderApi.reviewSupplier(orderId, purchaseId, outcome))
+    invalidateAdminAttention()
     await load()
   }
 
   const reviewPayment = async (attemptId: string, note: string) => {
     await requestOrThrow(() => adminOrderApi.reviewPayment(orderId, attemptId, note))
+    invalidateAdminAttention()
     await load()
   }
 
@@ -129,6 +132,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       await requestOrThrow(() => adminOrderApi.fulfill(order.id, { confirmed: true, items }))
       invalidateAdminOrders()
       invalidateAdminData("products", "inventory")
+      invalidateAdminAttention()
       toast.success(t("admin.manualDeliveryCompleted"))
       setManualFulfillmentOpen(false)
       await load()
@@ -175,6 +179,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       await requestOrThrow(() => adminOrderApi.refund(order.id, reason, reclaimSelection))
       invalidateAdminOrders()
       invalidateAdminData("products", "inventory", "users")
+      invalidateAdminAttention()
       toast.success(t("admin.refundSuccess"))
       setRefundOpen(false)
       setRefundReason("")

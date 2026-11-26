@@ -114,6 +114,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         }
 
         String status = normalizeStatus(input.status());
+        String attentionFilter = normalizeAttentionFilter(input.attentionFilter());
         LocalDateTime createdFrom = parseDateBoundary(input.createdFrom(), "created_from");
         LocalDateTime createdTo = parseDateBoundary(input.createdTo(), "created_to");
         if (createdFrom != null && createdTo != null && !createdFrom.isBefore(createdTo)) {
@@ -125,7 +126,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
         var pageable = PageRequest.of(page - 1, pageSize);
         Page<Order> orderPage = orderRepository.searchAdminOrders(
-                status, createdFrom, createdTo, keywordPattern, sortDirection, pageable);
+                status, attentionFilter, LocalDateTime.now().minusMinutes(10), createdFrom, createdTo,
+                keywordPattern, sortDirection, pageable);
 
         List<Order> orders = orderPage.getContent();
         List<UUID> orderIds = orders.stream().map(Order::getId).toList();
@@ -444,6 +446,14 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         } catch (IllegalArgumentException exception) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的状态筛选");
         }
+    }
+
+    private String normalizeAttentionFilter(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (Set.of("AFTER_SALE", "MANUAL_FULFILLMENT", "SUPPLIER_EXCEPTION", "AUTO_DELIVERY_EXCEPTION", "PAYMENT_EXCEPTION").contains(normalized))
+            return normalized;
+        throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的待办筛选");
     }
 
     private String normalizeSortDirection(String value) {

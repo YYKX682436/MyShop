@@ -9,6 +9,7 @@ import com.myshop.model.response.CaptchaResponse;
 import com.myshop.config.ClientIpResolver;
 import com.myshop.service.AuthService;
 import com.myshop.service.AuthCookieService;
+import com.myshop.service.AuthSessionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +24,7 @@ public class AuthController {
     private final AuthService authService;
     private final ClientIpResolver clientIpResolver;
     private final AuthCookieService authCookieService;
+    private final AuthSessionService authSessionService;
 
     @GetMapping("/captcha")
     public ApiResponse<CaptchaResponse> getCaptcha() {
@@ -34,7 +36,7 @@ public class AuthController {
                                               HttpServletRequest servletRequest,
                                               HttpServletResponse response) {
         AuthResult result = authService.register(request, clientIpResolver.resolve(servletRequest));
-        authCookieService.writeAuthCookies(response, result.token());
+        authCookieService.writeAuthCookies(response, result.token(), java.time.Duration.ofDays(result.lifetimeDays()));
         return ApiResponse.success(new AuthResponse(result.user()));
     }
 
@@ -43,13 +45,13 @@ public class AuthController {
                                            HttpServletRequest servletRequest,
                                            HttpServletResponse response) {
         AuthResult result = authService.login(request, clientIpResolver.resolve(servletRequest));
-        authCookieService.writeAuthCookies(response, result.token());
+        authCookieService.writeAuthCookies(response, result.token(), java.time.Duration.ofDays(result.lifetimeDays()));
         return ApiResponse.success(new AuthResponse(result.user()));
     }
 
     @PostMapping("/logout")
-    public ApiResponse<Void> logout(HttpServletResponse response) {
-        authService.logout();
+    public ApiResponse<Void> logout(HttpServletRequest request, HttpServletResponse response) {
+        authSessionService.revokeCurrent(request);
         authCookieService.clearAuthCookies(response);
         return ApiResponse.success();
     }

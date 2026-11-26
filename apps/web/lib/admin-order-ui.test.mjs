@@ -18,6 +18,7 @@ test("admin order search sends defaults and all filters in the JSON body", () =>
       created_from: "2026-09-01",
       created_to: "2026-09-02",
       sort_direction: "asc",
+      attention_filter: "SUPPLIER_EXCEPTION",
     }))),
     {
       page: 3,
@@ -27,6 +28,7 @@ test("admin order search sends defaults and all filters in the JSON body", () =>
       created_from: "2026-09-01",
       created_to: "2026-09-02",
       sort_direction: "asc",
+      attention_filter: "SUPPLIER_EXCEPTION",
     },
   )
   assert.equal(buildAdminOrderSearchBody().sort_direction, "desc")
@@ -108,6 +110,10 @@ test("admin order filters use the horizontal segmented control and include refun
   assert.match(source, /data-active=\{statusFilter === tab\.value\}/)
   assert.match(styles, /\.segmented-control\s*\{[^}]*overflow-x:\s*auto/s)
   assert.match(source, /status: statusFilter === "ALL" \? undefined : statusFilter/)
+  assert.match(source, /attention_filter: attentionFilter \|\| undefined/)
+  assert.match(source, /MANUAL_FULFILLMENT/)
+  assert.match(source, /SUPPLIER_EXCEPTION/)
+  assert.match(source, /AUTO_DELIVERY_EXCEPTION/)
   assert.doesNotMatch(source, /value=\{statusFilter\}[\s\S]*option/)
 })
 
@@ -369,6 +375,7 @@ test("admin after-sale review exposes the conversation, attention state, and saf
   const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
   const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
   const attentionSource = readSource("./admin-attention.tsx")
+  const pollingSource = readSource("../hooks/use-visible-poll.ts")
 
   assert.match(listSource, /value: "AFTER_SALE"/)
   assert.match(listSource, /afterSaleNeedsAttention/)
@@ -378,8 +385,10 @@ test("admin after-sale review exposes the conversation, attention state, and saf
   assert.match(routeSource, /adminOrderApi\.rejectAfterSale/)
   assert.match(routeSource, /adminOrderApi\.approveAfterSale/)
   assert.match(routeSource, /rejectionReason/)
-  assert.match(attentionSource, /30_000/)
-  assert.match(attentionSource, /visibilitychange/)
+  assert.match(attentionSource, /15_000/)
+  assert.match(attentionSource, /useVisiblePoll/)
+  assert.match(pollingSource, /visibilitychange/)
+  assert.match(pollingSource, /addEventListener\("focus"/)
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {
