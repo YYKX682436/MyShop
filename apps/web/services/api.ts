@@ -369,7 +369,8 @@ export interface SiteAnnouncement {
 }
 
 export interface NotificationLevel { id: string; name: string }
-export interface AnnouncementPage { items: SiteAnnouncement[]; next_cursor: string | null }
+export interface AnnouncementPage { items: SiteAnnouncement[]; next_cursor: string | null; first_unread_id?: string | null; first_unread_cursor?: string | null }
+export interface AnnouncementReadReceipt { id: string; version: number }
 export interface AnnouncementManagementData { announcements: SiteAnnouncement[]; levels: NotificationLevel[] }
 export interface NotificationEdit {
   requestKey?: string
@@ -382,13 +383,16 @@ export interface NotificationEdit {
 
 export const announcementApi = {
   summary: (signal?: AbortSignal) => request<{ unread: number; latest: Pick<SiteAnnouncement, "id" | "title" | "body" | "published_at"> | null }>("/announcements/summary", { signal }, false),
-  list: (before?: string | null, signal?: AbortSignal) => {
-    const params = new URLSearchParams({ size: "30" }); if (before) params.set("before", before)
+  list: (before?: string | null, signal?: AbortSignal, anchor = false) => {
+    const params = new URLSearchParams({ size: "30" }); if (before) params.set("before", before); if (anchor) params.set("anchor", "true")
     return request<AnnouncementPage>(`/announcements?${params}`, { signal }, false)
   },
   detail: (id: string, signal?: AbortSignal) => request<SiteAnnouncement>(`/announcements/${encodeURIComponent(id)}`, { signal }, false),
+  refresh: (ids: string[], signal?: AbortSignal) => request<SiteAnnouncement[]>("/announcements/refresh", {
+    method: "POST", body: JSON.stringify({ ids }), signal,
+  }, false),
   read: (id: string, version: number, signal?: AbortSignal) => request<null>(`/announcements/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ version }), signal }, false),
-  readAll: (signal?: AbortSignal) => request<null>("/announcements/read-all", { method: "POST", body: "{}", signal }, false),
+  readAll: (signal?: AbortSignal) => request<AnnouncementReadReceipt[]>("/announcements/read-all", { method: "POST", body: "{}", signal }, false),
   manage: (scope: "admin" | "subsite") => ({
     list: (signal?: AbortSignal) => request<AnnouncementManagementData>(`/${scope}/announcements`, { signal }),
     save: (id: string | null, edit: NotificationEdit) => request<{ id: string }>(`/${scope}/announcements${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(edit) }),
@@ -399,6 +403,7 @@ export const announcementApi = {
 
 export interface SupportConversation {
   id: string
+  user_id?: string | null
   site_id: string | null
   site_name: string | null
   customer_name?: string
@@ -406,6 +411,8 @@ export interface SupportConversation {
   order_id: string | null
   order_no: string | null
   order_status: string | null
+  request_id?: string | null
+  round?: number
   latest_at: string | null
   latest_type: string | null
   preview: string
@@ -1001,6 +1008,8 @@ export const adminUserApi = {
     const qs = buildQuery(params)
     return request<PaginatedData<BalanceTransaction>>(`/admin/users/${id}/balance-transactions?${qs}`)
   },
+  locateBalanceTransaction: (id: string, transactionId: string, pageSize = 10) => request<{ transaction: BalanceTransaction; page: number }>(
+    `/admin/users/${encodeURIComponent(id)}/balance-transactions/locate/${encodeURIComponent(transactionId)}?page_size=${pageSize}`),
   getOperationLogs: (id: string, params: { page?: number; page_size?: number } = {}) => {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminOperationLogDetail>>(`/admin/users/${id}/operation-logs?${qs}`)

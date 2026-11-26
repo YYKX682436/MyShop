@@ -203,7 +203,7 @@ export default function MyOrdersPage() {
                   )}
                   {order.status === "AFTER_SALE" && (
                     <Link
-                      href={`/messages/support/new?order=${encodeURIComponent(order.id)}`}
+                      href={`/messages?order=${encodeURIComponent(order.id)}`}
                       className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none"
                       aria-label={t("status.AFTER_SALE")}
                     >
@@ -264,7 +264,7 @@ export default function MyOrdersPage() {
           orderNo={afterSaleOrder.order_no}
           productSummary={afterSaleOrder.items.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
           onOpenChange={open => { setAfterSaleOpen(open); if (!open) setAfterSaleOrder(null) }}
-          onSubmitted={() => { if (afterSaleOrder) router.push(`/messages/support/new?order=${encodeURIComponent(afterSaleOrder.id)}`) }}
+          onSubmitted={() => { if (afterSaleOrder) router.push(`/messages?order=${encodeURIComponent(afterSaleOrder.id)}`) }}
         />
       )}
     </div>

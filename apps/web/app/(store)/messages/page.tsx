@@ -1,45 +1,97 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Bell, ChevronRight, Headset } from "lucide-react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Bell } from "lucide-react"
+import { SupportThread } from "@/components/shared/support-thread"
 import { useMessageSummary } from "@/components/store/message-summary"
-import { formatDateTime } from "@/lib/utils"
+import { useSupportIdentity } from "@/hooks/use-support-identity"
+import { announcementApi, supportApi } from "@/services/api"
 
-function previewNotice(value: string | undefined) {
-  if (!value) return "暂无通知"
-  const text = value.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt: string) => alt ? `[图片：${alt}]` : "[图片]")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/[`*_>#~]/g, "").replace(/\s+/g, " ").trim()
-  return text || "[图片]"
-}
-
-function Entry({ href, title, preview, time, unread, icon: Icon }: {
-  href: string; title: string; preview: string; time?: string | null; unread: number; icon: typeof Bell
-}) {
-  return <Link href={href} className="group block min-w-0 rounded-card border border-border-subtle bg-surface p-4 transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5">
-    <div className="flex min-w-0 items-start gap-3">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary"><Icon className="size-5" aria-hidden="true" /></span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2"><span className="min-w-0 flex-1 truncate font-semibold">{title}</span>
-          {unread > 0 && <span className="shrink-0 rounded-full bg-destructive px-2 py-0.5 text-xs text-white" aria-label={`${unread} 条未读`}>{unread > 99 ? "99+" : unread}</span>}
-          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-        </div>
-        <p className="mt-2 line-clamp-2 break-words text-sm leading-5 text-foreground">{preview}</p>
-        <div className="mt-2 min-h-4 text-xs text-muted-foreground">{time && <time>{formatDateTime(time)}</time>}</div>
-      </div>
-    </div>
-  </Link>
+type Context = {
+  identity: string
+  conversationId: string
+  orderId?: string
+  orderNo?: string
+  requestId?: string
+  round?: number
+  noticeId?: string
+  noticeTitle?: string
 }
 
 export default function MessagesPage() {
-  const { announcements, support } = useMessageSummary()
-  const notification = announcements.latest?.title || previewNotice(announcements.latest?.body)
-  return <div className="mx-auto max-w-3xl space-y-4 py-0 sm:space-y-5 sm:py-6">
-    <h1 className="text-2xl font-semibold">消息</h1>
-    <div className="space-y-4">
-      <Entry href="/messages/support" title="商城客服" preview={support.latest?.preview || "联系客服"}
-        time={support.latest?.latest_at} unread={support.unread} icon={Headset} />
-      <Entry href="/messages/announcements" title="商城通知" preview={notification}
-        time={announcements.latest?.published_at} unread={announcements.unread} icon={Bell} />
+  const identity = useSupportIdentity()
+  const search = useSearchParams()
+  const router = useRouter()
+  const orderId = search.get("order") || undefined
+  const requestId = search.get("request_id") || undefined
+  const round = search.get("round") ? Number(search.get("round")) : undefined
+  const noticeId = search.get("notice") || undefined
+  const [context, setContext] = useState<Context | null>(null)
+  const [error, setError] = useState("")
+  const { announcements } = useMessageSummary()
+
+  useEffect(() => {
+    if (!identity) return
+    const controller = new AbortController()
+    setError("")
+    const conversation = orderId ? supportApi.order(orderId, controller.signal, requestId, round) : supportApi.general(controller.signal)
+    const notice = noticeId
+      ? announcementApi.detail(noticeId, controller.signal).then(item => ({ item, error: "" })).catch(() => ({ item: null, error: "该通知已撤下，或当前身份不可见" }))
+      : Promise.resolve({ item: null, error: "" })
+    Promise.all([conversation, notice]).then(([thread, noticeResult]) => {
+      if (controller.signal.aborted || !thread.conversation_id) return
+      if (noticeResult.error) setError(noticeResult.error)
+      setContext({
+        identity,
+        conversationId: thread.conversation_id,
+        ...(orderId && "order_id" in thread ? { orderId: thread.order_id, orderNo: thread.order_no } : {}),
+        ...(orderId && "request_id" in thread && thread.request_id ? { requestId: thread.request_id, round: thread.round } : {}),
+        ...(noticeResult.item ? { noticeId: noticeResult.item.id, noticeTitle: noticeResult.item.title || "商城通知" } : {}),
+      })
+    }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "无法打开客服") })
+    return () => controller.abort()
+  }, [identity, orderId, requestId, round, noticeId])
+
+  const current = context?.identity === identity ? context : null
+  function replaceQuery(params: URLSearchParams) {
+    router.replace("/messages" + (params.size ? "?" + params.toString() : ""), { scroll: false })
+  }
+  function clearOrder() {
+    setContext(previous => previous?.identity === identity ? { ...previous, orderId: undefined, orderNo: undefined, requestId: undefined, round: undefined } : previous)
+    const params = new URLSearchParams(search.toString())
+    params.delete("order"); params.delete("request_id"); params.delete("round")
+    replaceQuery(params)
+  }
+  function clearAfterSale() {
+    setContext(previous => previous?.identity === identity ? { ...previous, requestId: undefined, round: undefined } : previous)
+    const params = new URLSearchParams(search.toString())
+    params.delete("request_id"); params.delete("round")
+    replaceQuery(params)
+  }
+  function clearNotice() {
+    setContext(previous => previous?.identity === identity ? { ...previous, noticeId: undefined, noticeTitle: undefined } : previous)
+    const params = new URLSearchParams(search.toString())
+    params.delete("notice")
+    replaceQuery(params)
+  }
+
+  return <section className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
+    <header className="z-10 flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-border-subtle bg-background px-1">
+      <h1 className="text-base font-semibold">商城客服</h1>
+      <Link href="/messages/announcements" className="inline-flex min-h-11 items-center gap-2 rounded-full px-3 text-sm text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="relative inline-flex"><Bell className="size-4" aria-hidden="true" />
+          {announcements.unread > 0 && <span className="absolute -right-2 -top-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-4 text-white" aria-label={announcements.unread + " 条通知未读"}>{announcements.unread > 99 ? "99+" : announcements.unread}</span>}
+        </span>商城通知
+      </Link>
+    </header>
+    {error && <p role="status" className="shrink-0 px-1 py-1 text-xs text-muted-foreground">{error}</p>}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {current ? <SupportThread id={current.conversationId} orderId={current.orderId} orderNo={current.orderNo}
+        afterSaleRequestId={current.requestId} afterSaleRound={current.round} noticeId={current.noticeId} noticeTitle={current.noticeTitle}
+        onClearOrder={clearOrder} onClearAfterSale={clearAfterSale} onClearNotice={clearNotice} identity={identity} showHeader={false} />
+        : !error && <div role="status" aria-label="正在打开客服" className="flex min-h-0 flex-1 flex-col gap-3 py-3"><div className="h-12 w-3/5 animate-pulse rounded-2xl bg-muted" /><div className="h-12 w-2/3 animate-pulse self-end rounded-2xl bg-muted" /><div className="flex-1" /></div>}
     </div>
-  </div>
+  </section>
 }

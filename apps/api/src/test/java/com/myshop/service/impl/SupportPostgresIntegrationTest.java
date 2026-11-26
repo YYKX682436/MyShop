@@ -86,45 +86,45 @@ class SupportPostgresIntegrationTest {
         assertEquals(sent,support.send(null,null,key,"你好",List.of(),false,"guest-a"));
         assertThrows(BusinessException.class,() -> support.send(conversation,null,key,"不同内容",List.of(),false,"guest-a"));
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_messages",Integer.class));
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,"guest-b"));
-        assertEquals(0L,support.detail(conversation,false,"guest-a").get("unread"));
-        assertEquals(0L,support.customerSummary("guest-a").get("unread"));
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,"guest-b"));
+        assertEquals(0L,timeline.detail(conversation,false,"guest-a").get("unread"));
+        assertEquals(0L,timeline.customerSummary("guest-a").get("unread"));
 
         UUID admin=UUID.randomUUID();
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role,is_deleted) VALUES (?,? ,?,'test','ADMIN',0)",admin,"admin-"+admin,admin+"@example.com");
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertEquals(1L,support.detail(conversation,true,null).get("unread"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(1L,timeline.detail(conversation,true,null).get("unread"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
-        var events=items(support.activities(conversation,true,null,null,null,40));
+        var events=items(timeline.activities(conversation,true,null,null,null,40));
         long first=Long.parseLong((String)events.getFirst().get("cursor"));
-        support.markRead(conversation,true,null,first);
-        assertEquals(0L,support.detail(conversation,true,null).get("unread"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        timeline.markRead(conversation, true, null, List.of(Long.toString(first)));
+        assertEquals(0L,timeline.detail(conversation,true,null).get("unread"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
         UUID adminKey=UUID.randomUUID();
         support.send(conversation,null,adminKey,"客服回复",List.of(),true,null);
-        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(false,timeline.detail(conversation,true,null).get("needs_attention"));
         assertFalse(isPending(conversation));
         RequestContext.clear();
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             support.send(conversation,null,UUID.randomUUID(),"回滚的咨询",List.of(),false,"guest-a");
             status.setRollbackOnly();
         });
-        assertEquals(false,support.detail(conversation,false,"guest-a").get("needs_attention"));
-        assertEquals(1L,support.detail(conversation,false,"guest-a").get("unread"));
-        assertEquals(1L,support.customerSummary("guest-a").get("unread"));
-        var next=items(support.activities(conversation,false,"guest-a",first,null,40));
+        assertEquals(false,timeline.detail(conversation,false,"guest-a").get("needs_attention"));
+        assertEquals(1L,timeline.detail(conversation,false,"guest-a").get("unread"));
+        assertEquals(1L,timeline.customerSummary("guest-a").get("unread"));
+        var next=items(timeline.activities(conversation,false,"guest-a",first,null,40));
         assertEquals(1,next.size());
         long second=Long.parseLong((String)next.getFirst().get("cursor"));
-        support.markRead(conversation,false,"guest-a",second);
-        support.markRead(conversation,false,"guest-a",first);
-        assertEquals(0L,support.detail(conversation,false,"guest-a").get("unread"));
-        assertEquals(second,jdbc.queryForObject("SELECT read_seq FROM support_read_states WHERE conversation_id=? AND viewer_type='CUSTOMER'",Long.class,conversation));
+        timeline.markRead(conversation, false, "guest-a", List.of(Long.toString(second)));
+        timeline.markRead(conversation, false, "guest-a", List.of(Long.toString(first)));
+        assertEquals(0L,timeline.detail(conversation,false,"guest-a").get("unread"));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM support_activity_receipts WHERE conversation_id=? AND viewer_type='CUSTOMER'", Integer.class, conversation));
 
         support.send(conversation,null,UUID.randomUUID(),"再次咨询",List.of(),false,"guest-a");
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
         // Replaying an older successful reply, system events, validation failures,
         // and rolled-back replies cannot resolve a later customer message.
@@ -135,32 +135,102 @@ class SupportPostgresIntegrationTest {
             support.send(conversation,null,UUID.randomUUID(),"回滚的回复",List.of(),true,null);
             status.setRollbackOnly();
         });
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
         assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_messages WHERE content='回滚的回复'",Integer.class));
         RequestContext.clear();
         Subsite other=new Subsite(); other.setId(UUID.randomUUID()); SiteRequestContext.set(other);
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,"guest-a"));
-        assertTrue(support.list(false,"guest-a",null,null,false,false,0,30).isEmpty());
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,"guest-a"));
+        assertTrue(timeline.list(false, "guest-a", null, null, false, false, null, null, 0, 30).isEmpty());
+    }
+
+    @Test void administratorCannotAttachAnotherBuyersOrderOrAfterSaleToCustomerThread() {
+        UUID customerA=UUID.randomUUID(), customerB=UUID.randomUUID(), admin=UUID.randomUUID();
+        UUID orderB=UUID.randomUUID(), requestB=UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true)),(?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                customerA,"buyer-a-"+customerA,customerA+"@example.com",Math.abs(customerA.hashCode())+10000L,
+                customerB,"buyer-b-"+customerB,customerB+"@example.com",Math.abs(customerB.hashCode())+20000L);
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"admin-"+admin,admin+"@example.com");
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,5,5,'AFTER_SALE','NORMAL')",
+                orderB,customerB);
+        jdbc.update("INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at) VALUES (?,?,?,'PENDING','PAID','顾客 B 的申请','ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+                requestB,orderB,customerB);
+        RequestContext.set(new RequestContext.UserInfo(customerA,"buyer-a","USER"));
+        UUID threadA=(UUID)support.generalContext(null).get("conversation_id");
+
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertThrows(BusinessException.class,() -> support.send(threadA,orderB,UUID.randomUUID(),"串入顾客 B 订单",List.of(),true,null));
+        assertThrows(BusinessException.class,() -> support.replyAfterSale(threadA,UUID.randomUUID(),"串入顾客 B 售后",orderB,requestB,1,List.of(),true,null));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_messages WHERE conversation_id=?",Integer.class,threadA));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=?",Integer.class,requestB));
+    }
+
+    @Test void adminOrderSearchAndEntryResolveRootMessagesAndDeliveryEvents() {
+        UUID buyer=UUID.randomUUID(), admin=UUID.randomUUID(), order=UUID.randomUUID();
+        long userNo=Math.abs((long)buyer.hashCode())+81000L;
+        String username="order-search-"+buyer;
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,username,buyer+"@example.com",userNo);
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"order-search-admin-"+admin,admin+"@example.com");
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,6,6,'PAID','NORMAL')",order,buyer);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        UUID root=(UUID)support.generalContext(null).get("conversation_id");
+        support.send(root,order,UUID.randomUUID(),"与此订单有关的普通咨询",List.of(),false,null);
+        String orderNo=jdbc.queryForObject("SELECT order_no::text FROM orders WHERE id=?",String.class,order);
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertEquals(root,support.adminOrderContext(order).get("conversation_id"));
+        assertTrue(timeline.list(true,null,"main","all",false,false,orderNo,null,0,30)
+                .stream().anyMatch(row -> root.equals(row.get("id"))));
+        assertTrue(timeline.list(true,null,"main","all",false,false,null,null,0,30,username)
+                .stream().anyMatch(row -> root.equals(row.get("id"))));
+        assertTrue(timeline.list(true,null,"main","all",false,false,null,null,0,30,Long.toString(userNo))
+                .stream().anyMatch(row -> root.equals(row.get("id"))));
+
+        jdbc.update("INSERT INTO support_system_events(source_type,source_id,event_type,conversation_id,user_id,order_id,happened_at) VALUES ('ORDER',?,'ORDER_DELIVERED',?,?,?,CURRENT_TIMESTAMP)",
+                UUID.randomUUID(),root,buyer,order);
+        assertEquals(root,support.adminOrderContext(order).get("conversation_id"));
+        assertTrue(timeline.list(true,null,"main","all",false,false,orderNo,null,0,30)
+                .stream().anyMatch(row -> root.equals(row.get("id"))));
+    }
+
+    @Test void adminWorkbenchLoadsSyntheticConversationSummariesAsOnePageBatch() {
+        UUID admin=UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",
+                admin,"batch-summary-admin-"+admin,admin+"@example.com");
+        UUID defaultLevel=jdbc.queryForObject("SELECT id FROM user_levels WHERE is_default=true",UUID.class);
+        for (int index=0;index<20;index++) {
+            UUID buyer=UUID.randomUUID(); String name="batch-summary-"+index;
+            jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,?)",
+                    buyer,name,buyer+"@example.com",900000L+index,defaultLevel);
+            RequestContext.set(new RequestContext.UserInfo(buyer,name,"USER"));
+            support.send(null,null,UUID.randomUUID(),"合成消息 "+index,List.of(),false,null);
+        }
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        List<Map<String,Object>> rows=timeline.list(true,null,"main","all",false,false,null,null,0,30);
+        assertEquals(20,rows.size());
+        assertTrue(rows.stream().anyMatch(row -> "合成消息 0".equals(row.get("preview"))));
+        assertTrue(rows.stream().allMatch(row -> row.get("user_id") != null && row.get("latest_at") != null));
     }
 
     @Test void imageOnlyConsultationIsPendingAndHasAnImagePreview() {
         var image=new MockMultipartFile("attachments","proof.png","image/png",new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1});
         UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"",List.of(image),false,"guest-image").get("conversation_id");
-        assertEquals("[图片]",support.detail(conversation,false,"guest-image").get("preview"));
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,"another-guest"));
+        assertEquals("[图片]",timeline.detail(conversation,false,"guest-image").get("preview"));
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,"another-guest"));
         UUID admin=UUID.randomUUID();
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",admin,"admin-"+admin,admin+"@example.com");
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
-        assertEquals(1L,support.detail(conversation,true,null).get("unread"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(1L,timeline.detail(conversation,true,null).get("unread"));
         assertTrue(isPending(conversation));
         support.send(conversation,null,UUID.randomUUID(),"",List.of(image),true,null);
-        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
-        assertEquals("[图片]",support.detail(conversation,true,null).get("preview"));
+        assertEquals(false,timeline.detail(conversation,true,null).get("needs_attention"));
+        assertEquals("[图片]",timeline.detail(conversation,true,null).get("preview"));
         RequestContext.clear();
         support.send(conversation,null,UUID.randomUUID(),"文字优先",List.of(image),false,"guest-image");
-        assertEquals("文字优先",support.detail(conversation,false,"guest-image").get("preview"));
+        assertEquals("文字优先",timeline.detail(conversation,false,"guest-image").get("preview"));
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
         assertTrue(isPending(conversation));
     }
@@ -177,17 +247,17 @@ class SupportPostgresIntegrationTest {
         Subsite current=new Subsite(); current.setId(site); SiteRequestContext.set(current);
         RequestContext.set(new RequestContext.UserInfo(first,"first","USER"));
         UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"分站咨询",List.of(),false,null).get("conversation_id");
-        assertEquals(true,support.detail(conversation,false,null).get("needs_attention"));
+        assertEquals(true,timeline.detail(conversation,false,null).get("needs_attention"));
         RequestContext.set(new RequestContext.UserInfo(second,"second","USER"));
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
-        assertTrue(support.list(false,null,null,null,false,false,0,30).isEmpty());
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,null));
+        assertTrue(timeline.list(false, null, null, null, false, false, null, null, 0, 30).isEmpty());
         RequestContext.set(new RequestContext.UserInfo(first,"first","USER"));
         SiteRequestContext.clear();
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
-        assertTrue(support.list(false,null,null,null,false,false,0,30).isEmpty());
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,null));
+        assertTrue(timeline.list(false, null, null, null, false, false, null, null, 0, 30).isEmpty());
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertTrue(support.list(true,null,site.toString(),null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
-        assertTrue(support.list(true,null,UUID.randomUUID().toString(),null,false,true,0,30).isEmpty());
+        assertTrue(timeline.list(true, null, site.toString(), null, false, true, null, null, 0, 30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
+        assertTrue(timeline.list(true, null, UUID.randomUUID().toString(), null, false, true, null, null, 0, 30).isEmpty());
     }
 
     @Test void guestOrderAndPrivateAttachmentRequireTheOriginalSession() {
@@ -210,7 +280,7 @@ class SupportPostgresIntegrationTest {
         UUID user=UUID.randomUUID();
         RequestContext.set(new RequestContext.UserInfo(user,"other","USER"));
         assertThrows(BusinessException.class,() -> support.orderContext(order,"guest-a"));
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,"guest-a"));
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,"guest-a"));
     }
 
     @Test void pendingSaleUsesOriginalReplyServiceAndClosedSaleAllowsOrdinaryConsultation() {
@@ -225,13 +295,15 @@ class SupportPostgresIntegrationTest {
         jdbc.update("UPDATE orders SET status='AFTER_SALE' WHERE id=?",order);
         UUID evidence=UUID.randomUUID();
         jdbc.update("INSERT INTO after_sale_attachments(id,request_id,storage_key,original_filename,content_type,file_size) VALUES (?,?,'after-sales/test/proof.png','proof.png','image/png',9)",evidence,sale);
-        UUID conversation=jdbc.queryForObject("SELECT id FROM support_conversations WHERE order_id=?",UUID.class,order);
+        UUID orderThread=jdbc.queryForObject("SELECT id FROM support_conversations WHERE order_id=?",UUID.class,order);
+        UUID conversation=(UUID)support.orderContext(order,null).get("conversation_id");
+        assertNotEquals(orderThread, conversation);
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
-        var initial=items(support.activities(conversation,false,null,null,null,40));
+        var initial=items(timeline.activities(conversation,false,null,null,null,40));
         var application=initial.stream().filter(row -> "AFTER_SALE_APPLY".equals(row.get("source_type"))).findFirst().orElseThrow();
         assertEquals("需要处理的问题",application.get("content"));
         assertEquals(evidence,((Map<?,?>)((List<?>)application.get("attachments")).getFirst()).get("id"));
-        UUID root=(UUID)support.orderContext(order,null).get("conversation_id");
+        UUID root=conversation;
         assertThrows(BusinessException.class,() -> support.replyAfterSale(root,earlierKey,"之前的咨询",order,sale,1,List.of(),false,null));
         assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,sale,earlierKey));
         assertThrows(BusinessException.class,() -> support.replyAfterSale(root,earlierKey,"不同内容",order,sale,1,List.of(),false,null));
@@ -243,20 +315,20 @@ class SupportPostgresIntegrationTest {
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,sale,key));
         assertEquals("ADMIN",jdbc.queryForObject("SELECT waiting_for FROM after_sale_requests WHERE id=?",String.class,sale));
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        var adminEvents=items(support.activities(conversation,true,null,null,null,40));
-        support.markRead(conversation,true,null,Long.parseLong((String)adminEvents.getLast().get("cursor")));
-        assertEquals(0L,support.detail(conversation,true,null).get("unread"));
-        assertEquals("ADMIN",support.detail(conversation,true,null).get("waiting_for"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
-        assertTrue(support.list(true,null,null,null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
+        var adminEvents=items(timeline.activities(conversation,true,null,null,null,40));
+        timeline.markRead(conversation, true, null, adminEvents.stream().map(event -> (String)event.get("cursor")).toList());
+        assertEquals(0L,timeline.detail(conversation,true,null).get("unread"));
+        assertEquals("ADMIN",timeline.detail(conversation,true,null).get("waiting_for"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(timeline.list(true, null, null, null, false, true, null, null, 0, 30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
         support.replyAfterSale(root,UUID.randomUUID(),"请补充",order,sale,1,List.of(),true,null);
-        assertEquals("CUSTOMER",support.detail(conversation,true,null).get("waiting_for"));
-        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals("CUSTOMER",timeline.detail(conversation,true,null).get("waiting_for"));
+        assertEquals(false,timeline.detail(conversation,true,null).get("needs_attention"));
         assertFalse(isPending(conversation));
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
         support.replyAfterSale(root,UUID.randomUUID(),"补充材料",order,sale,1,List.of(),false,null);
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(true,timeline.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
         afterSales.reject(order,"已处理");
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
@@ -359,7 +431,7 @@ class SupportPostgresIntegrationTest {
                 .contextPath("/api").header("X-Session-Token","guest-a").header("X-Message-Viewer","guest"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"hello",List.of(),false,"guest-a").get("conversation_id");
-        long cursor=Long.parseLong((String)items(support.activities(conversation,false,"guest-a",null,null,1)).getFirst().get("cursor"));
+        long cursor=Long.parseLong((String)items(timeline.activities(conversation,false,"guest-a",null,null,1)).getFirst().get("cursor"));
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/support/conversations/{id}/read",conversation)
                 .contextPath("/api").header("X-Session-Token","guest-a").header("X-Message-Viewer","guest")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"cursor\":\""+cursor+"\"}"))
@@ -385,9 +457,34 @@ class SupportPostgresIntegrationTest {
         UUID currentRoot=(UUID)support.orderContext(order,null).get("conversation_id");
         assertNotEquals(conversation,currentRoot);
         assertEquals(order,timeline.detail(conversation,false,null).get("order_id"));
-        assertTrue(support.list(false,null,null,null,false,false,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
+        assertTrue(timeline.list(false, null, null, null, false, false, null, null, 0, 30).stream().anyMatch(row -> currentRoot.equals(row.get("id"))));
         Subsite other=new Subsite(); other.setId(UUID.randomUUID()); SiteRequestContext.set(other);
-        assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
+        assertThrows(BusinessException.class,() -> timeline.detail(conversation,false,null));
+    }
+
+    @Test void disabledSiteRootKeepsItsPrivateMessageAttachmentsForTheTransferredBuyer() {
+        UUID owner=UUID.randomUUID(), buyer=UUID.randomUUID(), site=UUID.randomUUID(), order=UUID.randomUUID();
+        long number=Math.abs((long)buyer.hashCode())+91000L;
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true)),(?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                owner,"attachment-owner-"+owner,owner+"@example.com",number,
+                buyer,"attachment-buyer-"+buyer,buyer+"@example.com",number+1);
+        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name,enabled) VALUES (?,?,?,'旧分站附件',true)",site,owner,"attachment-"+site.toString().substring(0,8));
+        jdbc.update("UPDATE users SET subsite_id=? WHERE id=?",site,buyer);
+        jdbc.update("INSERT INTO orders(id,user_id,subsite_id,subsite_owner_id_snapshot,subsite_profit,total_amount,actual_amount,status,order_type) VALUES (?,?,?,?,0,1,1,'PAID','NORMAL')",order,buyer,site,owner);
+        Subsite activeSite=new Subsite(); activeSite.setId(site); SiteRequestContext.set(activeSite);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        UUID root=(UUID)support.generalContext(null).get("conversation_id");
+        var file=new MockMultipartFile("attachments","private.png","image/png",new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1});
+        support.send(root,order,UUID.randomUUID(),"分站订单内的私密图片",List.of(file),false,null);
+        UUID attachment=jdbc.queryForObject("SELECT id FROM support_attachments",UUID.class);
+        jdbc.update("UPDATE subsites SET enabled=false WHERE id=?",site);
+        jdbc.update("UPDATE users SET subsite_id=NULL WHERE id=?",buyer);
+        SiteRequestContext.clear();
+
+        assertEquals(root,timeline.detail(root,false,null).get("id"));
+        assertEquals(1,items(timeline.activities(root,false,null,null,null,40)).stream()
+                .filter(item -> "SUPPORT_MESSAGE".equals(item.get("source_type"))).count());
+        assertEquals("image/png",support.openAttachment(attachment,false,null).contentType());
     }
 
     @Test void oneCustomerTimelineAggregatesGeneralAndMultipleSaleThreadsWithPerMessageReceipts() {
@@ -460,25 +557,25 @@ class SupportPostgresIntegrationTest {
     @Test void pagedHistoryAndIncrementalCatchUpUseStableNonoverlappingCursors() {
         UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"message-0",List.of(),false,"guest-paging").get("conversation_id");
         for (int i=1;i<6;i++) support.send(conversation,null,UUID.randomUUID(),"message-"+i,List.of(),false,"guest-paging");
-        var latest=support.activities(conversation,false,"guest-paging",null,null,2);
+        var latest=timeline.activities(conversation,false,"guest-paging",null,null,2);
         var tail=items(latest);
         assertEquals(List.of("message-4","message-5"),tail.stream().map(row -> row.get("content")).toList());
         assertEquals(true,latest.get("has_more"));
         long before=Long.parseLong((String)latest.get("oldest_cursor"));
-        var earlier=items(support.activities(conversation,false,"guest-paging",null,before,2));
+        var earlier=items(timeline.activities(conversation,false,"guest-paging",null,before,2));
         assertEquals(List.of("message-2","message-3"),earlier.stream().map(row -> row.get("content")).toList());
         long cursor=Long.parseLong((String)latest.get("newest_cursor"));
         for (int i=6;i<9;i++) support.send(conversation,null,UUID.randomUUID(),"message-"+i,List.of(),false,"guest-paging");
-        var first=support.activities(conversation,false,"guest-paging",cursor,null,2);
+        var first=timeline.activities(conversation,false,"guest-paging",cursor,null,2);
         assertEquals(true,first.get("has_more"));
-        var second=support.activities(conversation,false,"guest-paging",Long.parseLong((String)first.get("newest_cursor")),null,2);
+        var second=timeline.activities(conversation,false,"guest-paging",Long.parseLong((String)first.get("newest_cursor")),null,2);
         var caughtUp=new java.util.ArrayList<Map<String,Object>>(items(first)); caughtUp.addAll(items(second));
         assertEquals(List.of("message-6","message-7","message-8"),caughtUp.stream().map(row -> row.get("content")).toList());
         assertEquals(3,caughtUp.stream().map(row -> row.get("id")).distinct().count());
     }
 
     private boolean isPending(UUID conversation) {
-        return support.list(true,null,null,null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id")));
+        return timeline.list(true, null, null, null, false, true, null, null, 0, 30).stream().anyMatch(row -> conversation.equals(row.get("id")));
     }
     @SuppressWarnings("unchecked") private List<Map<String,Object>> items(Map<String,Object> page) { return (List<Map<String,Object>>)page.get("items"); }
     private static Path temporaryDirectory() {

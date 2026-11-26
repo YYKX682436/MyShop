@@ -46,10 +46,11 @@ public class SupportController {
                                @RequestParam(defaultValue="false") boolean unread,
                                @RequestParam(defaultValue="false") boolean pending,
                                @RequestParam(required=false) String order,
+                               @RequestParam(required=false) String search,
                                @RequestParam(required=false) UUID level,
                                @RequestParam(defaultValue="0") int page,
                                @RequestParam(defaultValue="30") int size) {
-        return ApiResponse.success(timeline.list(admin(request), token, site, kind, unread, pending, order, level, page, size));
+        return ApiResponse.success(timeline.list(admin(request), token, site, kind, unread, pending, order, level, page, size, search));
     }
 
     @GetMapping("/conversations/{id}")

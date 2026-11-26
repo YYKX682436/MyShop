@@ -79,7 +79,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     } finally {
       requestInFlight.current = false
     }
-  }, [initialAction, orderId, t])
+  }, [orderId, t])
 
   useEffect(() => {
     void fetchView("initial", paymentReturn)
@@ -373,7 +373,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </details>
 
-    <div className="content-surface flex items-center justify-between gap-3 rounded-card p-4"><span className="text-sm font-medium">主站客服</span><Link className="text-sm text-primary" href={`/messages/support?${supportParams.toString()}`}>{activeSale ? "回复售后" : saleHistory.length ? "查看客服对话" : "联系客服"}</Link></div>
+    <div className="content-surface flex items-center justify-between gap-3 rounded-card p-4"><span className="text-sm font-medium">主站客服</span><Link className="text-sm text-primary" href={`/messages?${supportParams.toString()}`}>{activeSale ? "回复售后" : saleHistory.length ? "查看客服对话" : "联系客服"}</Link></div>
 
     {itemsWithCustomerInputs.length > 0 && (
       <details className="content-surface overflow-hidden">
@@ -477,7 +477,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       orderNo={view.order.order_no}
       productSummary={orderItems.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
       onOpenChange={setAfterSaleOpen}
-      onSubmitted={() => { router.push(`/messages/support/new?order=${encodeURIComponent(orderId)}`) }}
+      onSubmitted={() => { router.push(`/messages?order=${encodeURIComponent(orderId)}`) }}
     />
   </div>
 }

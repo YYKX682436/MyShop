@@ -1502,6 +1502,23 @@ dialog.media-manage-dialog::backdrop {
 .storefront-main--bottom-navigation {
   padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
 }
+.storefront-main--messages {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+.store-shell[data-chat-route] {
+  height: 100dvh;
+  min-height: 100dvh;
+}
+.store-shell[data-chat-keyboard-open] {
+  height: var(--chat-viewport-height);
+  min-height: var(--chat-viewport-height);
+}
+.store-shell[data-chat-keyboard-open] .storefront-main--messages {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 .store-liquid-surface {
   --store-liquid-bleed: 76px;
   position: fixed;
@@ -1512,6 +1529,13 @@ dialog.media-manage-dialog::backdrop {
   bottom: calc(env(safe-area-inset-bottom, 0px) - 36px);
   width: min(584px, calc(80vw + 152px));
   transform: translateX(-50%);
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease, visibility 160ms ease;
+}
+.store-shell[data-chat-keyboard-open] + .store-liquid-surface {
+  visibility: hidden;
+  opacity: 0;
+  transform: translate(-50%, calc(100% + 3rem));
   pointer-events: none;
 }
 .store-liquid-canvas {

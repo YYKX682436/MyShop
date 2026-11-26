@@ -107,10 +107,10 @@ export function NotificationManagement({ scope, onUploadingChange }: { scope: "a
   if (loading) return <div role="status" aria-label="加载中" className="h-20 animate-pulse rounded-control bg-muted" />
   if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>
 
-  return <div className="grid min-w-0 gap-5 md:grid-cols-[minmax(13rem,0.85fr)_minmax(0,1.6fr)]">
+  return <div className="grid min-w-0 gap-5 md:grid-cols-[minmax(18rem,0.65fr)_minmax(0,1.35fr)]">
     <section className="min-w-0 space-y-3" aria-label="通知历史">
       <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">通知</h3><Button type="button" variant="outline" onClick={() => select(null)} disabled={busy || uploading}>新建</Button></div>
-      <ul className="max-h-[32rem] overflow-auto rounded-control border border-border-subtle">
+      <ul className="max-h-[32rem] overflow-auto rounded-control border border-border-subtle md:max-h-[calc(100dvh-17rem)]">
         {items.map(item => <li key={item.id}>
           <button type="button" onClick={() => select(item)} disabled={busy || uploading}
             className={`w-full min-w-0 border-b border-border-subtle px-3 py-3 text-left last:border-b-0 ${selectedId === item.id ? "bg-primary/10" : "hover:bg-surface-muted"}`}>
@@ -150,8 +150,8 @@ export function NotificationManagement({ scope, onUploadingChange }: { scope: "a
           {audience === "LEVELS" && <p className="text-xs text-muted-foreground">等级通知可选用已公开的商品素材或站外图片；新上传图片会公开访问。</p>}
         </div>
         <div className="flex flex-wrap gap-2 border-t border-border-subtle pt-4">
-          <Button type="submit" disabled={busy || uploading || !dirty || !body.trim()}>保存草稿</Button>
-          {(!selected || selected.status === "DRAFT") && <Button type="button" variant="outline" disabled={busy || uploading || !body.trim() || (!selected && !dirty)} onClick={() => void save(true)}>{busy ? "发布中…" : selected ? "保存并发布" : "直接发布"}</Button>}
+          <Button type="button" variant={selected?.status === "PUBLISHED" ? "default" : "outline"} disabled={busy || uploading || !dirty || !body.trim()} onClick={() => void save(false)}>{busy ? "保存中…" : selected?.status === "PUBLISHED" ? "保存修改" : "保存草稿"}</Button>
+          {(!selected || selected.status === "DRAFT") && <Button type="button" disabled={busy || uploading || !body.trim() || (!selected && !dirty)} onClick={() => void save(true)}>{busy ? "处理中…" : selected ? "保存并发布" : "直接发布"}</Button>}
           {selected?.status === "PUBLISHED" && dirty && <span className="self-center text-xs text-muted-foreground">保存修改不会改变发布时间和已读状态</span>}
           {selected?.status === "PUBLISHED" && <Button type="button" variant="outline" disabled={busy || dirty}
             onClick={() => { if (window.confirm("撤下这条通知？")) void change(() => announcementApi.manage(scope).withdraw(selected.id), "通知已撤下") }}>撤下</Button>}

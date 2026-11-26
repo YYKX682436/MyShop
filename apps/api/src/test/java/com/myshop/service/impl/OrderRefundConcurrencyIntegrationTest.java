@@ -381,13 +381,12 @@ class OrderRefundConcurrencyIntegrationTest {
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE user_id = ?", Integer.class, userId));
         assertEquals(1, scalar("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=? AND notify_customer", Integer.class, orderId));
         RequestContext.set(new RequestContext.UserInfo(userId, "buyer", "USER"));
-        UUID conversation=scalar("SELECT id FROM support_conversations WHERE order_id=?",UUID.class,orderId);
-        @SuppressWarnings("unchecked") var events=(List<Map<String,Object>>)supportService.activities(conversation,false,null,null,null,40).get("items");
+        UUID root=scalar("SELECT id FROM support_conversations WHERE user_id=? AND order_id IS NULL AND site_id IS NULL",UUID.class,userId);
+        @SuppressWarnings("unchecked") var events=(List<Map<String,Object>>)supportTimeline.activities(root,false,null,null,null,40).get("items");
         var refund=events.stream().filter(event -> "ORDER_REFUND".equals(event.get("source_type"))).findFirst().orElseThrow();
         assertEquals(new BigDecimal("12.34"),refund.get("refund_amount"));
         assertEquals("BALANCE",refund.get("refund_destination"));
         assertEquals("REFUNDED",refund.get("order_status"));
-        UUID root=scalar("SELECT id FROM support_conversations WHERE user_id=? AND order_id IS NULL AND site_id IS NULL",UUID.class,userId);
         var timelineItems=items(supportTimeline.activities(root,false,null,null,null,40));
         var timelineRefund=timelineItems.stream().filter(event -> "ORDER_REFUND".equals(event.get("source_type"))).findFirst().orElseThrow();
         assertEquals(scalar("SELECT id FROM balance_transactions WHERE order_id=? AND type='REFUND'",UUID.class,orderId),timelineRefund.get("ledger_id"));

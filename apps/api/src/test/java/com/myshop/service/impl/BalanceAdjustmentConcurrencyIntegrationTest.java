@@ -4,6 +4,7 @@ import com.myshop.constant.BalanceAdjustmentType;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.User;
+import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AdminUserService;
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -165,6 +167,26 @@ class BalanceAdjustmentConcurrencyIntegrationTest {
         assertMoney("2.00", rows.get(1).after());
         assertEquals(2, jdbcTemplate.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='BALANCE_TRANSACTION' AND event_type='BALANCE_ADJUSTMENT' AND user_id=?", Integer.class, userId));
         assertEquals(2, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='SYSTEM_RESULT' AND notify_customer", Integer.class));
+    }
+
+    @Test
+    void adminLedgerLocationRejectsAnotherUsersTransaction() {
+        User target = new User();
+        target.setUsername("ledger-location-user"); target.setEmail("ledger-location@example.com");
+        target.setPasswordHash("test-password-hash"); target.setRole(UserRole.USER); target.setUserNo(19001L);
+        target.setUserLevelId(jdbcTemplate.queryForObject("SELECT id FROM user_levels WHERE is_default=true", UUID.class));
+        target.setBalance(new BigDecimal("0.00")); target.setIsDeleted(0);
+        UUID userId = userRepository.saveAndFlush(target).getId();
+        UUID adminId = UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(adminId, "ledger-admin", "ADMIN"));
+        AdminAdjustBalanceRequest adjustment = new AdminAdjustBalanceRequest();
+        adjustment.setType(BalanceAdjustmentType.INCREASE); adjustment.setAmount(new BigDecimal("3.00")); adjustment.setReason("测试流水定位");
+        UUID ledgerId = adminUserService.adjustBalance(userId, adjustment).id();
+
+        var location = adminUserService.balanceTransactionLocation(userId, ledgerId, 10);
+        assertEquals(ledgerId, ((com.myshop.model.response.BalanceTransactionResponse) location.get("transaction")).id());
+        assertEquals(1, location.get("page"));
+        assertThrows(BusinessException.class, () -> adminUserService.balanceTransactionLocation(UUID.randomUUID(), ledgerId, 10));
     }
 
     private void assertMoney(String expected, BigDecimal actual) {

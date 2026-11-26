@@ -1,21 +1,14 @@
-"use client"
+import { redirect } from "next/navigation"
 
-import { useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+type Search = Record<string, string | string[] | undefined>
 
-/** Keep old order consultation URLs, routing them into the single customer thread. */
-export default function LegacyNewSupportPage() {
-  const router = useRouter()
-  const search = useSearchParams()
-  const orderId = search.get("order")
-  const requestId = search.get("request_id")
-  const round = search.get("round")
-  useEffect(() => {
-    const params = new URLSearchParams()
-    if (orderId) params.set("order", orderId)
-    if (requestId) params.set("request_id", requestId)
-    if (round) params.set("round", round)
-    router.replace(`/messages/support${params.size ? `?${params}` : ""}`)
-  }, [orderId, requestId, round, router])
-  return <div role="status" aria-label="正在打开客服" className="mx-auto max-w-3xl py-8"><div className="h-48 animate-pulse rounded-card bg-muted" /></div>
+export default async function LegacyNewSupportPage({ searchParams }: { searchParams: Promise<Search> }) {
+  const values = await searchParams
+  const params = new URLSearchParams()
+  for (const key of ["order", "request_id", "round", "notice"]) {
+    const value = values[key]
+    const first = Array.isArray(value) ? value[0] : value
+    if (first) params.set(key, first)
+  }
+  redirect("/messages" + (params.size ? "?" + params.toString() : ""))
 }

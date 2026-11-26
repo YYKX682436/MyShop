@@ -11,6 +11,7 @@ import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
 
+import java.util.Map;
 import java.util.UUID;
 
 public interface AdminUserService {
@@ -25,6 +26,8 @@ public interface AdminUserService {
     PageResult<AdminUserOrderResponse> listUserOrders(UUID id, int page, int pageSize);
 
     PageResult<BalanceTransactionResponse> listBalanceTransactions(UUID id, int page, int pageSize);
+
+    Map<String, Object> balanceTransactionLocation(UUID userId, UUID transactionId, int pageSize);
 
     PageResult<AdminOperationLogResponse> listUserOperationLogs(UUID id, int page, int pageSize);
 

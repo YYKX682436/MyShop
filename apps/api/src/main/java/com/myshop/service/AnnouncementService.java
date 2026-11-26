@@ -55,6 +55,11 @@ public class AnnouncementService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> publicList(UUID siteId, String before, int size, String token) {
+        return publicList(siteId, before, size, token, false);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> publicList(UUID siteId, String before, int size, String token, boolean includeUnreadAnchor) {
         int boundedSize = Math.max(1, Math.min(size, 50));
         Identity identity = identity(token, false);
         List<Object> args = new ArrayList<>();
@@ -88,6 +93,22 @@ public class AnnouncementService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("items", rows);
         result.put("next_cursor", more && !rows.isEmpty() ? rows.getLast().get("cursor") : null);
+        if (includeUnreadAnchor && (before == null || before.isBlank())) {
+            List<Object> anchorArgs = new ArrayList<>();
+            String anchorReceipt = receiptJoin(identity, anchorArgs);
+            anchorArgs.add(siteId);
+            String anchorVisibility = visibilityClause(identity, anchorArgs);
+            List<Map<String, Object>> unreadAnchor = jdbc.query("SELECT a.id,a.published_at FROM site_announcements a "
+                            + "LEFT JOIN site_announcement_reads r ON r.announcement_id=a.id AND " + anchorReceipt
+                            + " WHERE a.site_scope=" + SITE_SCOPE + " AND a.status='PUBLISHED' AND a.published_at IS NOT NULL "
+                            + "AND coalesce(r.read_version,0)<a.publish_version AND " + anchorVisibility
+                            + " ORDER BY a.published_at,a.id LIMIT 1",
+                    (rs, n) -> Map.<String, Object>of("id", rs.getObject("id", UUID.class),
+                            "cursor", encodeCursor(timestamp(rs, "published_at"), rs.getObject("id", UUID.class))),
+                    anchorArgs.toArray());
+            result.put("first_unread_id", unreadAnchor.isEmpty() ? null : unreadAnchor.getFirst().get("id"));
+            result.put("first_unread_cursor", unreadAnchor.isEmpty() ? null : unreadAnchor.getFirst().get("cursor"));
+        }
         return result;
     }
 
@@ -139,10 +160,13 @@ public class AnnouncementService {
     public Map<String, Object> publicDetail(UUID siteId, UUID id, String token) {
         Identity identity = identity(token, false);
         List<Object> args = new ArrayList<>();
+        String receipt = receiptJoin(identity, args);
         args.add(id); args.add(siteId);
         String visibility = visibilityClause(identity, args);
-        return jdbc.query("SELECT a.id,a.title,a.body,a.status,a.published_at,a.publish_version "
-                        + "FROM site_announcements a WHERE a.id=? AND a.site_scope=" + SITE_SCOPE
+        return jdbc.query("SELECT a.id,a.title,a.body,a.status,a.published_at,a.publish_version,"
+                        + "(a.published_at IS NOT NULL AND coalesce(r.read_version,0)<a.publish_version) AS unread "
+                        + "FROM site_announcements a LEFT JOIN site_announcement_reads r "
+                        + "ON r.announcement_id=a.id AND " + receipt + " WHERE a.id=? AND a.site_scope=" + SITE_SCOPE
                         + " AND a.status='PUBLISHED' AND " + visibility,
                 (rs, n) -> {
                     Map<String, Object> row = announcement(rs);
@@ -153,6 +177,31 @@ public class AnnouncementService {
     }
 
     public Map<String, Object> publicDetail(UUID siteId, UUID id) { return publicDetail(siteId, id, null); }
+
+    /** Recheck a bounded set of already loaded notices against current publication and audience rules. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> refreshVisible(UUID siteId, List<UUID> requestedIds, String token) {
+        List<UUID> ids = requestedIds == null ? List.of() : requestedIds.stream().distinct().toList();
+        if (ids.size() > 100) throw bad("单次通知刷新不能超过 100 条");
+        if (ids.isEmpty()) return List.of();
+        Identity identity = identity(token, false);
+        List<Object> args = new ArrayList<>();
+        String receipt = receiptJoin(identity, args);
+        args.add(arrayValue(ids)); args.add(siteId);
+        String visibility = visibilityClause(identity, args);
+        return jdbc.query("SELECT a.id,a.title,a.body,a.status,a.published_at,a.publish_version,"
+                        + "(a.published_at IS NOT NULL AND coalesce(r.read_version,0)<a.publish_version) AS unread "
+                        + "FROM site_announcements a LEFT JOIN site_announcement_reads r "
+                        + "ON r.announcement_id=a.id AND " + receipt
+                        + " WHERE a.id=ANY(?::uuid[]) AND a.site_scope=" + SITE_SCOPE
+                        + " AND a.status='PUBLISHED' AND " + visibility
+                        + " ORDER BY a.published_at DESC NULLS LAST,a.id DESC",
+                (rs, n) -> {
+                    Map<String, Object> row = announcement(rs);
+                    row.put("cursor", encodeCursor(timestamp(rs, "published_at"), rs.getObject("id", UUID.class)));
+                    return row;
+                }, args.toArray());
+    }
 
     @Transactional
     public void markRead(UUID siteId, UUID id, int version, String token) {
@@ -169,7 +218,7 @@ public class AnnouncementService {
 
     /** Mark only the visible, published rows present in this statement snapshot. */
     @Transactional
-    public void markAllVisibleRead(UUID siteId, String token) {
+    public List<Map<String, Object>> markAllVisibleRead(UUID siteId, String token) {
         Identity identity = identity(token, true);
         List<Object> args = new ArrayList<>();
         String ownerColumn;
@@ -177,7 +226,7 @@ public class AnnouncementService {
         else { ownerColumn = "guest_token_hash"; args.add(identity.guestHash()); }
         args.add(siteId);
         String visibility = visibilityClause(identity, args);
-        jdbc.update("""
+        return jdbc.query("""
                 INSERT INTO site_announcement_reads(announcement_id, OWNER_COLUMN, read_version)
                 SELECT a.id, ?, a.publish_version FROM site_announcements a
                 WHERE a.site_scope=COALESCE(?::uuid,'00000000-0000-0000-0000-000000000000'::uuid)
@@ -186,7 +235,9 @@ public class AnnouncementService {
                 + (identity.userId() != null ? "WHERE user_id IS NOT NULL " : "WHERE guest_token_hash IS NOT NULL ")
                 + "DO UPDATE SET read_version=greatest(site_announcement_reads.read_version,excluded.read_version), "
                 + "read_at=CASE WHEN excluded.read_version>site_announcement_reads.read_version THEN CURRENT_TIMESTAMP "
-                + "ELSE site_announcement_reads.read_at END", args.toArray());
+                + "ELSE site_announcement_reads.read_at END RETURNING announcement_id,read_version",
+                (rs, n) -> Map.<String, Object>of("id", rs.getObject("announcement_id", UUID.class),
+                        "version", rs.getInt("read_version")), args.toArray());
     }
 
     public UUID managementSite(boolean main) {
@@ -204,15 +255,18 @@ public class AnnouncementService {
         List<Map<String, Object>> announcements = jdbc.query("SELECT id,title,body,status,published_at,publish_version,audience_type,audience_level_ids "
                         + "FROM site_announcements WHERE site_scope=" + SITE_SCOPE + " ORDER BY created_at DESC,id DESC",
                 (rs, n) -> announcement(rs), siteId);
-        List<Map<String, Object>> levels = jdbc.query("SELECT id,name FROM user_levels WHERE enabled ORDER BY sort_order,id",
-                (rs, n) -> Map.of("id", rs.getObject("id", UUID.class), "name", rs.getString("name")));
+        List<Map<String, Object>> levels = jdbc.query("SELECT level.id,level.name FROM user_levels level "
+                        + "WHERE level.enabled AND (?::uuid IS NULL OR EXISTS "
+                        + "(SELECT 1 FROM subsite_allowed_levels allowed WHERE allowed.level_id=level.id)) "
+                        + "ORDER BY level.sort_order,level.id",
+                (rs, n) -> Map.of("id", rs.getObject("id", UUID.class), "name", rs.getString("name")), siteId);
         return Map.of("announcements", announcements, "levels", levels);
     }
 
     @Transactional
     public UUID save(UUID siteId, UUID id, Edit edit) {
         Normalized normalized = validate(edit);
-        validateAudienceLevels(normalized.audienceType(), normalized.audienceLevelIds());
+        validateAudienceLevels(siteId, normalized.audienceType(), normalized.audienceLevelIds());
         byte[] fingerprint = fingerprint(normalized);
         if (id == null) {
             if (edit.requestKey() == null) throw bad("缺少通知请求标识");
@@ -291,10 +345,11 @@ public class AnnouncementService {
                 + "published_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND site_scope=" + SITE_SCOPE, id, siteId);
     }
 
-    private void validateAudienceLevels(String type, List<UUID> ids) {
+    private void validateAudienceLevels(UUID siteId, String type, List<UUID> ids) {
         if (!"LEVELS".equals(type)) return;
-        Long valid = jdbc.queryForObject("SELECT count(*) FROM user_levels WHERE enabled AND id=ANY(?::uuid[])",
-                Long.class, arrayValue(ids));
+        Long valid = jdbc.queryForObject("SELECT count(*) FROM user_levels level WHERE level.enabled AND level.id=ANY(?::uuid[]) "
+                        + "AND (?::uuid IS NULL OR EXISTS (SELECT 1 FROM subsite_allowed_levels allowed WHERE allowed.level_id=level.id))",
+                Long.class, arrayValue(ids), siteId);
         if (valid == null || valid != ids.size()) throw bad("所选通知等级无效或已停用");
     }
 

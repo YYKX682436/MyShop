@@ -82,6 +82,12 @@ public class AdminUserController {
         return ApiResponse.success(adminUserService.listBalanceTransactions(id, page, pageSize));
     }
 
+    @GetMapping("/{id}/balance-transactions/locate/{transactionId}")
+    public ApiResponse<?> locateBalanceTransaction(@PathVariable UUID id, @PathVariable UUID transactionId,
+            @RequestParam(value = "page_size", defaultValue = "10") int pageSize) {
+        return ApiResponse.success(adminUserService.balanceTransactionLocation(id, transactionId, pageSize));
+    }
+
     @GetMapping("/{id}/operation-logs")
     public ApiResponse<PageResult<AdminOperationLogResponse>> listOperationLogs(
             @PathVariable UUID id,

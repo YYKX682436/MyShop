@@ -34,6 +34,7 @@ function getPageLabel(pathname: string): TranslationKey {
   if (pathname.startsWith("/admin/card-keys")) return "admin.cardKeys"
   if (pathname.startsWith("/admin/orders")) return "admin.orders"
   if (pathname.startsWith("/admin/support")) return "admin.supportMessages"
+  if (pathname.startsWith("/admin/notifications")) return "admin.notifications"
   if (pathname.startsWith("/admin/users")) return "admin.users"
   if (pathname.startsWith("/admin/payment-channels")) return "admin.payment"
   if (pathname.startsWith("/admin/site-config")) return "admin.siteConfig"

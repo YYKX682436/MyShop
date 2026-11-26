@@ -24,7 +24,7 @@ function MaintenancePage() {
         <p className="mb-6 max-w-md text-sm text-muted-foreground">
           {config?.maintenance_message || t("maintenance.description")}
         </p>
-        <Link href="/messages/support" className="mb-4 inline-flex min-h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground">联系主站客服</Link>
+        <Link href="/messages" className="mb-4 inline-flex min-h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground">联系主站客服</Link>
       </div>
     </div>
   )
@@ -51,11 +51,11 @@ export function StoreShellClient({ children }: { children: React.ReactNode }) {
   const { user, isLoggedIn, authLoaded } = useAuth()
   const pathname = usePathname()
   const shellRef = useRef<HTMLDivElement>(null)
-  const hasBottomNavigation = ["/", "/my/orders", "/messages", "/my"].includes(pathname)
+  const hasBottomNavigation = ["/", "/my/orders", "/my"].includes(pathname) || pathname.startsWith("/messages")
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
-  const isExempt = MAINTENANCE_EXEMPT_PATHS.includes(pathname) || pathname === "/messages/support" || pathname.startsWith("/messages/support/")
+  const isExempt = MAINTENANCE_EXEMPT_PATHS.includes(pathname) || pathname === "/messages" || pathname === "/messages/support" || pathname.startsWith("/messages/support/")
   const isAdmin = authLoaded && isLoggedIn && isAdminRole(user?.role)
   const isMaintenance = configReady && config?.maintenance_enabled
 
@@ -67,11 +67,11 @@ export function StoreShellClient({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <MessageSummaryProvider><div ref={shellRef} className="store-shell flex min-h-screen flex-col bg-background">
+    <MessageSummaryProvider><div ref={shellRef} data-chat-route={pathname === "/messages" ? "true" : undefined} className="store-shell flex min-h-screen flex-col bg-background">
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <main
-        className={`storefront-main storefront-main--without-header mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]${hasBottomNavigation ? " storefront-main--bottom-navigation" : ""}`}
+        className={`storefront-main storefront-main--without-header mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]${hasBottomNavigation ? " storefront-main--bottom-navigation" : ""}${pathname === "/messages" ? " storefront-main--messages" : ""}`}
       >
         {children}
       </main>

@@ -5,6 +5,7 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   CreditCard,
+  Bell,
   FolderTree,
   KeyRound,
   Images,
@@ -72,6 +73,7 @@ const navGroups: AdminNavGroup[] = [
     items: [
       { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
       { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle },
+      { labelKey: "admin.notifications", href: "/admin/notifications", icon: Bell },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },

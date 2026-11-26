@@ -5,7 +5,10 @@ import com.myshop.context.SiteRequestContext;
 import com.myshop.service.AnnouncementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -14,23 +17,28 @@ import java.util.UUID;
 public class AnnouncementController {
     private final AnnouncementService announcements;
     public record Read(int version) {}
+    public record Refresh(List<UUID> ids) {}
 
     @GetMapping("/summary")
-    public ApiResponse<?> summary(@RequestHeader(value = "X-Session-Token", required = false) String token) {
-        return ApiResponse.success(announcements.summary(SiteRequestContext.getSiteId(), token));
+    public ResponseEntity<ApiResponse<?>> summary(@RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate())
+                .body(ApiResponse.success(announcements.summary(SiteRequestContext.getSiteId(), token)));
     }
 
     @GetMapping
-    public ApiResponse<?> list(@RequestParam(required = false) String before,
+    public ResponseEntity<ApiResponse<?>> list(@RequestParam(required = false) String before,
                                @RequestParam(defaultValue = "30") int size,
+                               @RequestParam(defaultValue = "false") boolean anchor,
                                @RequestHeader(value = "X-Session-Token", required = false) String token) {
-        return ApiResponse.success(announcements.publicList(SiteRequestContext.getSiteId(), before, size, token));
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate())
+                .body(ApiResponse.success(announcements.publicList(SiteRequestContext.getSiteId(), before, size, token, anchor)));
     }
 
     @GetMapping("/{id}")
-    public ApiResponse<?> detail(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<?>> detail(@PathVariable UUID id,
                                  @RequestHeader(value = "X-Session-Token", required = false) String token) {
-        return ApiResponse.success(announcements.publicDetail(SiteRequestContext.getSiteId(), id, token));
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate())
+                .body(ApiResponse.success(announcements.publicDetail(SiteRequestContext.getSiteId(), id, token)));
     }
 
     @PostMapping("/{id}/read")
@@ -41,8 +49,15 @@ public class AnnouncementController {
     }
 
     @PostMapping("/read-all")
-    public ApiResponse<Void> readAll(@RequestHeader(value = "X-Session-Token", required = false) String token) {
-        announcements.markAllVisibleRead(SiteRequestContext.getSiteId(), token);
-        return ApiResponse.success();
+    public ApiResponse<?> readAll(@RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ApiResponse.success(announcements.markAllVisibleRead(SiteRequestContext.getSiteId(), token));
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<ApiResponse<?>> refresh(@RequestBody Refresh refresh,
+                                  @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore().cachePrivate())
+                .body(ApiResponse.success(announcements.refreshVisible(SiteRequestContext.getSiteId(),
+                        refresh == null ? List.of() : refresh.ids(), token)));
     }
 }

@@ -66,7 +66,7 @@ function restoreRoute(renderer: LiquidGlassRenderer, index: number, immediate = 
 export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTMLDivElement | null> }) {
   const pathname = usePathname()
   const router = useRouter()
-  const selected = PATHS.findIndex(path => path === pathname)
+  const selected = pathname.startsWith("/messages") ? PATHS.indexOf("/messages") : PATHS.findIndex(path => path === pathname)
   const active = selected >= 0
   const { resolvedTheme } = useTheme()
   const { announcements, support } = useMessageSummary()
@@ -90,6 +90,46 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     themeRef.current = resolvedTheme
     selectedRef.current = selected
   }, [pathname, resolvedTheme, selected])
+
+  useEffect(() => {
+    const shell = sourceRef.current
+    if (!shell) return
+    const nav = navRef.current
+    const viewport = window.visualViewport
+    let baselineViewportHeight = viewport?.height ?? window.innerHeight
+    const update = () => {
+      const focused = document.activeElement instanceof HTMLElement
+        && (document.activeElement.matches("textarea,input,[contenteditable='true']"))
+      const viewportHeight = viewport?.height ?? window.innerHeight
+      if (!focused) baselineViewportHeight = viewportHeight
+      const keyboardOpen = pathname.startsWith("/messages") && focused && !!viewport
+        && baselineViewportHeight - viewportHeight > 140
+      shell.toggleAttribute("data-chat-keyboard-open", keyboardOpen)
+      if (keyboardOpen && viewport) shell.style.setProperty("--chat-viewport-height", Math.floor(viewportHeight) + "px")
+      else shell.style.removeProperty("--chat-viewport-height")
+      if (nav) {
+        nav.toggleAttribute("inert", keyboardOpen)
+        if (keyboardOpen) nav.setAttribute("aria-hidden", "true")
+        else nav.removeAttribute("aria-hidden")
+      }
+    }
+    update()
+    viewport?.addEventListener("resize", update)
+    viewport?.addEventListener("scroll", update)
+    window.addEventListener("resize", update)
+    document.addEventListener("focusin", update)
+    document.addEventListener("focusout", update)
+    return () => {
+      viewport?.removeEventListener("resize", update)
+      viewport?.removeEventListener("scroll", update)
+      window.removeEventListener("resize", update)
+      document.removeEventListener("focusin", update)
+      document.removeEventListener("focusout", update)
+      shell.removeAttribute("data-chat-keyboard-open")
+      shell.style.removeProperty("--chat-viewport-height")
+      nav?.removeAttribute("inert"); nav?.removeAttribute("aria-hidden")
+    }
+  }, [pathname, sourceRef])
 
   const navigate = useCallback((index: number) => {
     const path = PATHS[index]

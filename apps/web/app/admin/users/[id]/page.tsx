@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { ArrowLeft, Edit3, KeyRound, Plus, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
@@ -53,7 +53,10 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   const { t, locale } = useLocale()
   const router = useRouter()
   const params = useParams<{ id: string }>()
+  const search = useSearchParams()
   const userId = params.id
+  const requestedTab = search.get("tab")
+  const requestedLedger = search.get("ledger")
   const [user, setUser] = useState<AdminUserDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -62,6 +65,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   const [recordTotal, setRecordTotal] = useState(0)
   const [orders, setOrders] = useState<AdminUserOrder[]>([])
   const [transactions, setTransactions] = useState<BalanceTransaction[]>([])
+  const [ledgerFocus, setLedgerFocus] = useState<string | null>(null)
   const [logs, setLogs] = useState<AdminOperationLogDetail[]>([])
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [recordsError, setRecordsError] = useState(false)
@@ -128,6 +132,25 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   }, [userId])
 
   useEffect(() => { void loadUser() }, [loadUser])
+  useEffect(() => {
+    let active = true
+    if (requestedTab === "balance") {
+      if (!requestedLedger) {
+        setLedgerFocus(null); setRecordPage(1); setActiveTab("balance")
+      } else {
+        adminUserApi.locateBalanceTransaction(userId, requestedLedger, PAGE_SIZE).then(location => {
+          if (!active) return
+          setLedgerFocus(location.transaction.id); setRecordPage(location.page); setActiveTab("balance")
+        }).catch(() => {
+          if (!active) return
+          setLedgerFocus(null); setRecordPage(1); setActiveTab("balance")
+        })
+      }
+    } else if (requestedTab === "orders" || requestedTab === "logs" || requestedTab === "overview") {
+      setLedgerFocus(null); setActiveTab(requestedTab)
+    }
+    return () => { active = false }
+  }, [userId, requestedTab, requestedLedger])
   useEffect(() => { void adminUserLevelApi.getList().then(setLevels).catch(() => setLevels([])) }, [])
   useEffect(() => {
     if (activeTab !== "overview" && activeTab !== "secret") void loadRecords(activeTab, recordPage)
@@ -356,7 +379,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
       {activeTab === "overview" && <Overview user={user} t={t} locale={locale} />}
       {activeTab === "secret" && <UserSecretPrices userId={userId} onDirtyChange={setSecretDirty} />}
       {activeTab === "orders" && <OrdersTab orders={orders} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
-      {activeTab === "balance" && <BalanceTab transactions={transactions} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
+      {activeTab === "balance" && <section id="balance-records" className="scroll-mt-20"><BalanceTab transactions={transactions} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} highlightId={ledgerFocus} /></section>}
       {activeTab === "logs" && <LogsTab logs={logs} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
 
       <Dialog open={editOpen} onOpenChange={(open) => { if (!editLoading) setEditOpen(open) }}>
@@ -463,9 +486,13 @@ function OrdersTab({ orders, loading, error, onRetry, page, total, onPageChange,
   return <RecordShell loading={loading} error={error} empty={orders.length === 0} onRetry={onRetry} colSpan={6} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{orders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0"><td data-label={t("admin.orderNo")} className="break-all px-4 py-3 font-mono text-xs">{order.order_no}</td><td data-label={t("admin.orderProducts")} className="max-w-[260px] truncate px-4 py-3">{order.items.map((item) => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、") || t("admin.systemNoData")}</td><td data-label={t("admin.amount")} className="whitespace-nowrap px-4 py-3">{formatYuanValue(order.actual_amount ?? order.total_amount ?? 0)}</td><td data-label={t("admin.statusLabel")} className="px-4 py-3"><OrderStatusBadge status={order.status} items={order.items} /></td><td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td data-label={t("admin.actions")} className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="sm"><Link href={`/admin/orders/${order.id}`}>{t("admin.viewDetail")}</Link></Button></td></tr>)}</RecordShell>
 }
 
-function BalanceTab({ transactions, loading, error, onRetry, page, total, onPageChange, t, locale }: { transactions: BalanceTransaction[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {
+function BalanceTab({ transactions, loading, error, onRetry, page, total, onPageChange, t, locale, highlightId }: { transactions: BalanceTransaction[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string; highlightId: string | null }) {
+  useEffect(() => {
+    if (!highlightId || loading) return
+    document.getElementById("balance-ledger-" + highlightId)?.scrollIntoView({ block: "center", behavior: "smooth" })
+  }, [highlightId, loading, transactions])
   const typeLabel = (type: BalanceTransaction["type"]) => balanceTransactionLabel(type, t)
-  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => { const deltaCents = parseMoneyValueToCents(transaction.delta) ?? 0; return <tr key={transaction.id} className="border-b border-border/60 last:border-0"><td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td data-label={t("admin.balanceType")} className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td data-label={t("admin.balanceDelta")} className={`whitespace-nowrap px-4 py-3 font-medium ${deltaCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>{deltaCents >= 0 ? "+" : "-"}{formatYuanFromCents(Math.abs(deltaCents))}</td><td data-label={t("admin.balanceBeforeAfter")} className="whitespace-nowrap px-4 py-3">{formatYuanValue(transaction.balance_before)} → {formatYuanValue(transaction.balance_after)}</td><td data-label={t("admin.balanceReason")} className="max-w-[260px] truncate px-4 py-3" title={transaction.reason || undefined}>{transaction.reason || t("admin.noReason")}</td><td data-label={t("admin.operator")} className="px-4 py-3">{transaction.operator_username || <TechnicalId value={transaction.operator_id} label={t("admin.operator")} />}</td><td data-label={t("admin.actions")} className="px-4 py-3">—</td></tr> })}</RecordShell>
+  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => { const deltaCents = parseMoneyValueToCents(transaction.delta) ?? 0; return <tr key={transaction.id} id={"balance-ledger-" + transaction.id} className={`border-b border-border/60 last:border-0 ${transaction.id === highlightId ? "bg-primary/10 outline outline-2 outline-primary/30" : ""}`}><td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td data-label={t("admin.balanceType")} className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td data-label={t("admin.balanceDelta")} className={`whitespace-nowrap px-4 py-3 font-medium ${deltaCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>{deltaCents >= 0 ? "+" : "-"}{formatYuanFromCents(Math.abs(deltaCents))}</td><td data-label={t("admin.balanceBeforeAfter")} className="whitespace-nowrap px-4 py-3">{formatYuanValue(transaction.balance_before)} → {formatYuanValue(transaction.balance_after)}</td><td data-label={t("admin.balanceReason")} className="max-w-[260px] truncate px-4 py-3" title={transaction.reason || undefined}>{transaction.reason || t("admin.noReason")}</td><td data-label={t("admin.operator")} className="px-4 py-3">{transaction.operator_username || <TechnicalId value={transaction.operator_id} label={t("admin.operator")} />}</td><td data-label={t("admin.actions")} className="px-4 py-3">—</td></tr> })}</RecordShell>
 }
 
 function LogsTab({ logs, loading, error, onRetry, page, total, onPageChange, t, locale }: { logs: AdminOperationLogDetail[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {

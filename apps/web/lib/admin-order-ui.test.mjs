@@ -160,7 +160,7 @@ test("storefront order header owns the compact manual refresh action", () => {
   const bottom = source.slice(productDetailsEnd, source.indexOf("<AfterSaleRequestDialog", productDetailsEnd))
   assert.doesNotMatch(bottom, /manualRefresh|刷新订单状态|order\.refresh/)
   assert.doesNotMatch(source, /<ContactSupport/)
-  assert.match(source, /messages\/support\/new\?order=/)
+  assert.match(source, /messages\?order=/)
 })
 
 test("refund detail and storefront lifecycle expose the refund facts without payment actions", () => {
@@ -355,8 +355,9 @@ test("order numbers stay opaque display strings and order links use internal UUI
   assert.match(orderPage, /view\.order\.order_no/)
   assert.match(orderPage, /break-all text-right font-mono/)
   assert.match(supportTypes, /order_no: string \| null/)
-  assert.match(supportThread, /break-all font-mono text-xs/)
-  assert.match(supportThread, /href=\{`\/order\/\$\{encodeURIComponent\(orderId\)\}`\}/)
+  assert.match(supportThread, /break-all font-mono text-sm/)
+  assert.match(supportThread, /admin \? "\/admin\/orders\/" : "\/order\/"/)
+  assert.match(supportThread, /encodeURIComponent\(orderId\)/)
   assert.match(supportTypes, /order_no\?: string \| null/)
   assert.doesNotMatch(supportThread, /Number\([^)]*order_no/)
   assert.match(adminOrders, /copyOrderNo\(order\.order_no\)/)

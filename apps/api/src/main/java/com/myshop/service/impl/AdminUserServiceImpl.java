@@ -24,6 +24,7 @@ import com.myshop.model.response.BalanceTransactionResponse;
 import com.myshop.model.response.IpLocationResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.OrderItemRepository;
+import com.myshop.repository.BalanceTransactionRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
@@ -70,6 +71,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     private final PasswordEncoder passwordEncoder;
     private final UserLevelRepository userLevelRepository;
     private final IpLocationService ipLocationService;
+    private BalanceTransactionRepository balanceTransactionRepository;
 
     @Autowired
     public AdminUserServiceImpl(UserRepository userRepository,
@@ -162,6 +164,23 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .map(transaction -> toBalanceResponse(transaction, operatorNames.get(transaction.getOperatorId())))
                 .toList();
         return PageResult.of(transactionPage, list);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> balanceTransactionLocation(UUID userId, UUID transactionId, int pageSize) {
+        requireRegularUser(userId, false);
+        int boundedSize = Math.max(1, Math.min(pageSize, MAX_PAGE_SIZE));
+        BalanceTransaction transaction = balanceTransactionRepository.findById(transactionId)
+                .filter(value -> value.getUserId().equals(userId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "余额流水不存在"));
+        long newer = balanceTransactionRepository.countNewerThanForUser(userId,
+                transaction.getCreatedAt(), transaction.getId());
+        Map<UUID, String> operatorNames = loadOperatorNames(List.of(transaction));
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("transaction", toBalanceResponse(transaction, operatorNames.get(transaction.getOperatorId())));
+        result.put("page", Math.toIntExact(newer / boundedSize) + 1);
+        return result;
     }
 
     @Override
@@ -396,6 +415,11 @@ public class AdminUserServiceImpl implements AdminUserService {
                 transaction.getId(), transaction.getType(), transaction.getAmount(), transaction.getDelta(),
                 transaction.getBalanceBefore(), transaction.getBalanceAfter(), transaction.getReason(),
                 transaction.getOperatorId(), operatorUsername, transaction.getOrderId(), transaction.getCreatedAt());
+    }
+
+    @Autowired
+    public void setBalanceTransactionRepository(BalanceTransactionRepository repository) {
+        this.balanceTransactionRepository = repository;
     }
 
     private AdminOperationLogResponse toOperationLogResponse(OperationLog log) {

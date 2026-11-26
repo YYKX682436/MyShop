@@ -1841,11 +1841,12 @@ class PostgresDeliveryIntegrationTest {
             assertNotNull(access.getOrder(orderId,null,"guest-token"));
             assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"other-token"));
             var support=webApplicationContext.getBean(com.myshop.service.SupportService.class);
+            var timeline=webApplicationContext.getBean(com.myshop.service.SupportTimelineService.class);
             assertNotNull(support.orderContext(orderId,"guest-token"));
             assertThrows(BusinessException.class,()->support.orderContext(orderId,"other-token"));
             var message=support.send(null,orderId,UUID.randomUUID(),"游客订单咨询",List.of(),false,"guest-token");
             assertNotNull(message.get("conversation_id"));
-            assertThrows(BusinessException.class,()->support.detail((UUID)message.get("conversation_id"),false,"other-token"));
+            assertThrows(BusinessException.class,()->timeline.detail((UUID)message.get("conversation_id"),false,"other-token"));
             com.myshop.context.SiteRequestContext.clear();
             assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"guest-token"));
             assertTrue(scalar("select return_url_snapshot from payment_attempts where order_id=?",String.class,orderId).startsWith("https://"+prefix+".mc520.top/"));
