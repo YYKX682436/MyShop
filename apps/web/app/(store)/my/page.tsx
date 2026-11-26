@@ -16,7 +16,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { AccountAvatar } from "@/components/store/account-avatar"
-import { LayoutModePreferenceButton } from "@/components/layout/layout-mode"
 import { Badge } from "@/components/ui/badge"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
@@ -141,8 +140,6 @@ export default function MyPage() {
 
         <section className="settings-group" aria-label={t("settings.title")}>
           <AccountLink href="/my/settings" icon={Settings} label={t("my.settings")} />
-          <Divider />
-          <LayoutModePreferenceButton className="min-h-12 w-full justify-start rounded-none px-4" />
         </section>
       </div>
     )
@@ -281,8 +278,6 @@ export default function MyPage() {
         <AccountLink href="/my/security" icon={ShieldCheck} label={t("my.security")} />
         <Divider />
         <AccountLink href="/my/settings" icon={Settings} label={t("my.settings")} />
-        <Divider />
-        <LayoutModePreferenceButton className="min-h-12 w-full justify-start rounded-none px-4" />
         {isAdminRole(user.role) && (
           <>
             <Divider />

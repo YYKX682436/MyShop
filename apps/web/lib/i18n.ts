@@ -517,11 +517,6 @@ const zh = {
   "admin.loadError": "加载失败，请重试",
   "admin.pagination": "分页导航",
   "admin.goToPage": "前往第 {page} 页",
-  "layout.desktop": "电脑排版",
-  "layout.auto": "自动排版",
-  "layout.switchToDesktop": "切换到电脑排版",
-  "layout.switchToAuto": "恢复自动排版",
-
   // Admin Dashboard
   "admin.dashboardLastUpdated": "上次更新：{time}",
   "admin.refresh": "刷新",
@@ -1985,11 +1980,6 @@ const en: Record<keyof typeof zh, string> = {
   "admin.loadError": "Load failed. Please try again.",
   "admin.pagination": "Pagination",
   "admin.goToPage": "Go to page {page}",
-  "layout.desktop": "Desktop layout",
-  "layout.auto": "Automatic layout",
-  "layout.switchToDesktop": "Switch to desktop layout",
-  "layout.switchToAuto": "Restore automatic layout",
-
   // Admin Dashboard
   "admin.dashboardLastUpdated": "Last updated: {time}",
   "admin.refresh": "Refresh",

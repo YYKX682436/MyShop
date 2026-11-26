@@ -4,7 +4,7 @@ import { Toaster } from "sonner"
 import { AppProviders } from "@/lib/context"
 import { MotionProvider } from "@/components/ui/motion"
 import { ThemeScript } from "./theme-script"
-import { LayoutModeScript } from "./layout-mode-script"
+import { ViewportCompatibilityScript } from "./viewport-compatibility-script"
 import { requestSiteUrl } from "@/lib/request-site"
 import { getSiteConfig } from "@/services/api-server"
 import "./globals.css"
@@ -49,7 +49,7 @@ export default function RootLayout({
     <html lang="zh" suppressHydrationWarning>
       <head>
         <ThemeScript />
-        <LayoutModeScript />
+        <ViewportCompatibilityScript />
       </head>
       <body className="font-sans antialiased" suppressHydrationWarning>
         <MotionProvider>

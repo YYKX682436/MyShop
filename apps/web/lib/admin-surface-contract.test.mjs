@@ -62,21 +62,10 @@ test("compact table visibility and record styles share the same container breakp
     ".admin-recharges-table .admin-table-scroll table { display: none; }",
     ".admin-recharge-mobile-list { display: grid; }",
     ".admin-recharge-mobile-record { display: grid;",
-    ":root[data-layout-mode=\"desktop\"] .admin-orders-table .admin-table-scroll > table { display: table; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-order-mobile-list { display: none; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-products-table .admin-table-scroll table { display: table; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-product-mobile-list { display: none; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-users-table .admin-table-scroll table { display: table; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-user-mobile-list { display: none; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-recharges-table .admin-table-scroll table { display: table; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-recharge-mobile-list { display: none; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-orders-table table { width: 1180px; min-width: 1180px; table-layout: fixed; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-products-table table { width: 1180px; min-width: 1180px; table-layout: fixed; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-users-table table { width: 1040px; min-width: 1040px; table-layout: fixed; }",
-    ":root[data-layout-mode=\"desktop\"] .admin-recharges-table table { width: 1050px; min-width: 1050px; table-layout: fixed; }",
   ]) {
     assert.ok(compactStyles.includes(selector), `missing compact style: ${selector}`)
   }
+  assert.doesNotMatch(compactStyles, /data-layout-mode/)
   assert.doesNotMatch(styles, /@container admin-table \(max-width: 720px\)/)
 })
 

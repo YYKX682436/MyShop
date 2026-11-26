@@ -162,13 +162,13 @@ try {
     await page.waitForTimeout(700)
     console.log("CARD_DEBUG", await page.evaluate(() => { const img = document.querySelector(".product-image-stage--card img"); return { img: img?.outerHTML, style: img && getComputedStyle(img).objectFit, body: document.body.innerText.slice(0, 300), html: document.body.innerHTML.slice(0, 500), styles: document.styleSheets.length } }))
   }
-  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--card img"); return img && getComputedStyle(img).objectFit === "contain" }, null, { timeout: 8000 })
+  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--card img"); return img && getComputedStyle(img).objectFit === "cover" }, null, { timeout: 8000 })
   const cardStyle = await page.evaluate(() => { const style = getComputedStyle(document.querySelector(".product-image-stage--card img")); return [style.objectFit, style.objectPosition] })
   await navigate("square")
-  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--detail img"); return img && getComputedStyle(img).objectFit === "contain" })
+  await page.waitForFunction(() => { const img = document.querySelector(".product-image-stage--detail img"); return img && getComputedStyle(img).objectFit === "cover" })
   const detailStyle = await page.evaluate(() => { const style = getComputedStyle(document.querySelector(".product-image-stage--detail img")); return [style.objectFit, style.objectPosition] })
   assert.deepEqual(detailStyle, cardStyle, "home and detail preview cropping must match")
-  assert.deepEqual(detailStyle, ["contain", "50% 50%"])
+  assert.deepEqual(detailStyle, ["cover", "50% 0%"])
   originals.length = 0
   await page.reload({ waitUntil: "domcontentloaded" })
   await imageButton().waitFor()
@@ -273,6 +273,20 @@ try {
   await closeBackdrop()
   await page.setViewportSize({ width: 320, height: 568 })
   await navigate("portrait")
+  await page.waitForFunction(() => {
+    const img = document.querySelector(".product-image-stage--detail img")
+    return img?.complete && img.naturalWidth > 0 && img.naturalHeight > 0
+  })
+  const portraitPreview = await page.locator(".product-image-stage--detail img").evaluate(img => ({
+    fit: getComputedStyle(img).objectFit,
+    position: getComputedStyle(img).objectPosition,
+    naturalRatio: img.naturalHeight / img.naturalWidth,
+    stage: [img.parentElement.clientWidth, img.parentElement.clientHeight],
+  }))
+  assert.deepEqual(portraitPreview.fit, "cover")
+  assert.deepEqual(portraitPreview.position, "50% 0%")
+  assert.ok(Math.abs(portraitPreview.naturalRatio / 10 - 1) < 0.03, "optimized portrait preview preserves the source ratio: " + portraitPreview.naturalRatio)
+  assert.ok(Math.abs(portraitPreview.stage[0] / portraitPreview.stage[1] - 1) < 0.01, "portrait preview fills a square stage")
   await imageButton().click()
   await page.waitForFunction(() => document.querySelector(".product-image-viewer-original")?.naturalHeight === 5000)
   const dimensions = await original.evaluate(img => {
@@ -304,6 +318,20 @@ try {
   await dialog().waitFor({ state: "hidden" })
   await page.waitForFunction(y => window.scrollY === y, backgroundBefore)
   await navigate("landscape")
+  await page.waitForFunction(() => {
+    const img = document.querySelector(".product-image-stage--detail img")
+    return img?.complete && img.naturalWidth > 0 && img.naturalHeight > 0
+  })
+  const landscapePreview = await page.locator(".product-image-stage--detail img").evaluate(img => ({
+    fit: getComputedStyle(img).objectFit,
+    position: getComputedStyle(img).objectPosition,
+    naturalRatio: img.naturalWidth / img.naturalHeight,
+    stage: [img.parentElement.clientWidth, img.parentElement.clientHeight],
+  }))
+  assert.deepEqual(landscapePreview.fit, "cover")
+  assert.deepEqual(landscapePreview.position, "50% 0%")
+  assert.ok(Math.abs(landscapePreview.naturalRatio / 4 - 1) < 0.03, "optimized landscape preview preserves the source ratio: " + landscapePreview.naturalRatio)
+  assert.ok(Math.abs(landscapePreview.stage[0] / landscapePreview.stage[1] - 1) < 0.01, "landscape preview fills a square stage")
   await imageButton().click()
   await page.waitForFunction(() => document.querySelector(".product-image-viewer-original")?.naturalWidth === 1200)
   const landscape = await original.evaluate(img => ({ shape: img.dataset.shape, width: img.getBoundingClientRect().width, height: img.getBoundingClientRect().height }))
@@ -329,6 +357,7 @@ try {
   await navigate("square")
   const desktop = await page.locator(".product-image-stage--detail").boundingBox()
   assert.ok(Math.abs(desktop.width / desktop.height - 0.8) < 0.01, "desktop preview retains the existing 4:5 layout")
+  assert.deepEqual(await page.locator(".product-image-stage--detail img").evaluate(img => [getComputedStyle(img).objectFit, getComputedStyle(img).objectPosition]), ["cover", "50% 0%"])
   assert.equal(await page.locator(".product-breadcrumb").isVisible(), true, "desktop breadcrumb should remain available")
   await page.emulateMedia({ colorScheme: "dark" })
   await page.setViewportSize({ width: 390, height: 844 })

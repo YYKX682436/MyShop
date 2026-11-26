@@ -13,7 +13,6 @@
     "test:store-navigation": "node scripts/test-store-navigation.mjs",
     "test:logic": "node --experimental-strip-types --test lib/*.test.mjs",
     "test:support-viewport": "node scripts/test-support-viewport.mjs",
-    "test:layout-r1": "node scripts/test-layout-r1.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
     "test:product-viewer": "node scripts/test-product-viewer.mjs",
     "test:purchase-dock": "node scripts/test-purchase-dock.mjs",
