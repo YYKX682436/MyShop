@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { isAikayunApp } from "./native-app.ts"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -24,6 +25,7 @@ export function formatYuan(amount: number): string {
 
 export function detectPaymentDevice(): string {
   if (typeof window === 'undefined') return 'pc'
+  if (isAikayunApp()) return 'mobile'
   const ua = navigator.userAgent.toLowerCase()
   if (ua.includes('micromessenger')) return 'wechat'
   if (ua.includes('alipayclient') || ua.includes('alipay')) return 'alipay'

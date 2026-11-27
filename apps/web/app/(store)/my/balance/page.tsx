@@ -209,6 +209,7 @@ export default function MyBalancePage() {
             <div className="rounded-card border border-border-subtle bg-surface-muted/50 p-4">
               <PaymentActionRenderer action={payment.next_action}
                 loadState={payment.next_action ? "ready" : payment.creation_status === "INTENT" || payment.creation_status === "SUBMITTING" ? "loading" : "ready"}
+                recoveryUrl={transaction?.id ? `/my/balance?payment_transaction=${encodeURIComponent(transaction.id)}` : undefined}
                 retryAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>}
                 retryStatusAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>} />
               <div className="mt-3 flex items-center justify-center gap-2 text-xs text-muted-foreground" role="status"><Clock3 className="size-3.5" aria-hidden="true" />{t("my.purchasePending")}</div>

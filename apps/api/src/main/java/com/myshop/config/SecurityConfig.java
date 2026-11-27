@@ -54,6 +54,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Public endpoints
                         .requestMatchers("/auth/captcha", "/auth/register", "/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/app-shell/resolve").permitAll()
                         .requestMatchers(HttpMethod.GET, "/products/**", "/categories", "/site/config", "/subsite/current", "/payment-channels", "/payment-providers").permitAll()
                         .requestMatchers(HttpMethod.GET, "/announcements", "/announcements/*").permitAll()
                         .requestMatchers(HttpMethod.POST, "/announcements/*/read", "/announcements/read-all").permitAll()
@@ -76,6 +77,7 @@ public class SecurityConfig {
                         .requestMatchers("/auth/logout").authenticated()
                         .requestMatchers("/user/**").authenticated()
                         // Admin endpoints
+                        .requestMatchers("/admin/app-shell/config", "/admin/app-shell/config/**").hasRole("SUPER_ADMIN")
                         .requestMatchers("/admin/administrators/**").hasRole("SUPER_ADMIN")
                         .requestMatchers("/admin/**", "/upload/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         // Default

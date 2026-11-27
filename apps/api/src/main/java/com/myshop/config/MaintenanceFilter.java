@@ -52,6 +52,7 @@ public class MaintenanceFilter implements Filter {
                 || ("GET".equalsIgnoreCase(httpRequest.getMethod()) && (path.equals("/api/user/profile")
                     || path.startsWith("/api/after-sale-attachments/") || path.startsWith("/api/supplier-complaint-attachments/")))
                 || path.equals("/api/site/config")
+                || path.equals("/api/app-shell/resolve")
                 || path.startsWith("/api/auth/")
                 || path.startsWith("/api/captcha")) {
             chain.doFilter(request, response);

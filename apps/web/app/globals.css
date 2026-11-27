@@ -1144,6 +1144,44 @@
   padding-top: 1rem;
 }
 
+html[data-aikayun-app="android"] {
+  --aikayun-store-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--aikayun-safe-bottom, 0px));
+  --product-purchase-scroll-margin: calc(5.5rem + var(--aikayun-store-safe-bottom));
+}
+
+html[data-aikayun-app="android"] .storefront-main--without-header:not(.storefront-main--messages) {
+  padding-top: calc(max(1rem, env(safe-area-inset-top, 0px), var(--aikayun-safe-top, 0px)) + 4rem);
+}
+
+html[data-aikayun-app="android"] .storefront-main--bottom-navigation,
+html[data-aikayun-app="android"] .storefront-main--messages {
+  padding-bottom: calc(5.5rem + var(--aikayun-store-safe-bottom));
+}
+
+html[data-aikayun-app="android"] .storefront-main--messages {
+  padding-top: calc(max(env(safe-area-inset-top, 0px), var(--aikayun-safe-top, 0px)) + 4rem);
+}
+
+html[data-aikayun-app="android"] .store-shell[data-chat-keyboard-open] .storefront-main--messages {
+  padding-bottom: var(--aikayun-store-safe-bottom);
+}
+
+html[data-aikayun-app="android"] .store-liquid-surface {
+  bottom: calc(var(--aikayun-store-safe-bottom) - 36px);
+}
+
+html[data-aikayun-app="android"] .product-purchase-dock-viewport {
+  padding-bottom: calc(0.75rem + var(--aikayun-store-safe-bottom));
+}
+
+html[data-aikayun-app="android"] .product-purchase-panel {
+  --purchase-bottom-gap: calc(0.75rem + var(--aikayun-store-safe-bottom));
+}
+
+html[data-aikayun-app="android"] [data-sonner-toaster][data-y-position="top"] {
+  inset-block-start: calc(max(env(safe-area-inset-top, 0px), var(--aikayun-safe-top, 0px)) + 4rem) !important;
+}
+
 .product-purchase-dock-viewport {
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
 }

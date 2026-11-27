@@ -222,6 +222,7 @@ export default function MyLevelsPage() {
         <div className="rounded-card border border-border-subtle bg-surface-muted/50 p-4">
           <PaymentActionRenderer action={payment.next_action}
             loadState={payment.next_action ? "ready" : payment.creation_status === "INTENT" || payment.creation_status === "SUBMITTING" ? "loading" : "ready"}
+            recoveryUrl={transaction?.id ? `/my/levels?payment_transaction=${encodeURIComponent(transaction.id)}` : undefined}
             retryAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>}
             retryStatusAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>} />
           <p className="mt-3 text-center text-xs text-muted-foreground">{t("my.purchasePending")}</p>

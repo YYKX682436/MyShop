@@ -109,6 +109,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     public List<?> getAllConfigs() {
         return siteConfigRepository.findAll().stream()
+                .filter(config -> !"app_shell_config".equals(config.getConfigKey()))
                 .map(c -> {
                     Map<String, Object> map = new LinkedHashMap<>();
                     map.put("config_key", c.getConfigKey());

@@ -79,6 +79,26 @@ class SiteConfigServiceImplTest {
     }
 
     @Test
+    void appShellAuthorizationIsHiddenFromGenericReadsAndCannotBeWrittenThroughGenericUpdates() {
+        SiteConfig shell = new SiteConfig();
+        shell.setConfigKey("app_shell_config");
+        shell.setConfigValue("{\"enabled\":true}");
+        SiteConfig publicValue = new SiteConfig();
+        publicValue.setConfigKey("site_name");
+        publicValue.setConfigValue("MyShop");
+        when(repository.findAll()).thenReturn(List.of(shell, publicValue));
+
+        var configs = service.getAllConfigs();
+        assertEquals(1, configs.size());
+        assertTrue(configs.toString().contains("site_name"));
+        assertFalse(configs.toString().contains("app_shell_config"));
+
+        service.updateConfigs(List.of(config("app_shell_config", "{\"enabled\":false}")));
+        verify(repository, never()).save(any(SiteConfig.class));
+        verify(repository, never()).saveAndFlush(any(SiteConfig.class));
+    }
+
+    @Test
     void generalSiteSettingsRejectInvalidSharedRiskValues() {
         assertThrows(BusinessException.class,
                 () -> service.updateConfigs(List.of(config("rate_limit_per_second", "0"))));

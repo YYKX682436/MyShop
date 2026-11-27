@@ -58,6 +58,7 @@ import { buildAdminRefundPayload } from "@/lib/admin-refund-ui"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
 import { buildAdminOrderSearchBody } from "@/lib/admin-order-search"
 import type { AdminOrderSearchParams } from "@/lib/admin-order-search"
+import type { AppShellConfig } from "@/lib/app-shell-config"
 
 // ============================================================
 // Config
@@ -1074,6 +1075,10 @@ export const adminConfigApi = {
     request<UserNumberConfig>("/admin/site-config/user-numbering"),
   updateUserNumbering: (data: Pick<UserNumberConfig, "start_user_no" | "next_user_no">) =>
     request<null>("/admin/site-config/user-numbering", { method: "PUT", body: JSON.stringify(data) }),
+  getAppShell: () =>
+    request<AppShellConfig>("/admin/app-shell/config"),
+  updateAppShell: (data: AppShellConfig) =>
+    request<AppShellConfig>("/admin/app-shell/config", { method: "PUT", body: JSON.stringify(data) }),
 }
 
 // ============================================================

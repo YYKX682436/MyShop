@@ -12,6 +12,9 @@ const SCRIPT = String.raw`
     }
 
     function reconcileViewport() {
+      // Desktop and mobile viewport control is native in the Android WebView.
+      // Keep the browser compatibility path as the sole writer everywhere else.
+      if (document.documentElement?.dataset.aikayunApp === "android") return
       const viewports = Array.from(document.querySelectorAll('meta[name="viewport"]'))
       const screenWidth = Number(window.screen?.width || 0)
       const wide = viewports

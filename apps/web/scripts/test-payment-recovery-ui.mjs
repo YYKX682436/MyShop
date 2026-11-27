@@ -53,8 +53,12 @@ try {
       remaining_seconds: 600, next_action: creation === "READY" && orderStatus === "PENDING" ? { type: "qr_code", value: "fake-qr" } : null })
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url()), method = route.request().method()
+      if (url.pathname === "/api/user/profile") {
+        await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ code: 401, message: "未登录" }) })
+        return
+      }
       let data = {}
-      if (url.pathname === "/api/user/profile") data = null
+      if (url.pathname === "/api/payment-channels") data = channels
       else if (url.pathname === "/api/orders" && method === "POST") {
         createCount++
         paymentType = route.request().postDataJSON().payment_channel_code === "test-wxpay" ? "wxpay" : "alipay"

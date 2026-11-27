@@ -26,6 +26,7 @@ import { supplierStatusLabel } from "@/lib/supplier-order"
 import { getAfterSaleAnchorDestination } from "@/lib/order-after-sale-anchor"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
 import { canApplyForAfterSale } from "@/lib/guest-order"
+import { saveTextInNativeApp } from "@/lib/native-app"
 
 const PAYMENT_RETURN_TIMEOUT = 20000
 const MANUAL_REFRESH_COOLDOWN = 10
@@ -229,6 +230,9 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const exportKeys = async () => {
     try {
       const content = await orderApi.exportKeys(orderId)
+      if (await saveTextInNativeApp("myshop-card-keys.txt", content)) {
+        return
+      }
       const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }))
       const anchor = document.createElement("a")
       anchor.href = url
@@ -419,7 +423,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
             ) : !paymentState.nextAction && view.payment?.can_retry === false ? (
               <div className="text-center text-sm text-white" role="status">{t("payment.creationBlocked")}</div>
             ) : (
-              <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
+              <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} recoveryUrl={`/order/${encodeURIComponent(orderId)}`} retryAction={retryButton} retryStatusAction={retryStatusButton} />
             )}
           </div>
         )}

@@ -11,7 +11,9 @@ import { notifyMessagesChanged } from "@/components/store/message-summary"
 import { useVisiblePoll } from "@/hooks/use-visible-poll"
 import { createPendingSupportMessage, shouldFetchConversationDetail, SupportReadQueue, type PendingSupportMessage } from "@/lib/support-message-state"
 import { formatYuan } from "@/lib/utils"
+import { isAikayunApp, saveBlobInNativeApp, setNativeOverlayOpen, shareImageInNativeApp } from "@/lib/native-app"
 import { supportApi, type SupportActivity, type SupportAttachment, type SupportConversation } from "@/services/api"
+import { toast } from "sonner"
 
 type SaleContext = { orderId: string; orderNo: string; requestId: string; round: number }
 type Pending = PendingSupportMessage
@@ -464,21 +466,55 @@ function ImagePreview({ url, alt }: { url: string; alt: string }) {
 
 function PrivateAttachment({ attachment }: { attachment: SupportAttachment }) {
   const [url, setUrl] = useState<string | null>(null)
+  const [blob, setBlob] = useState<Blob | null>(null)
   const [error, setError] = useState(false)
   const [retry, setRetry] = useState(0)
   const [open, setOpen] = useState(false)
   useEffect(() => {
     const controller = new AbortController(); let objectUrl: string | null = null
-    setError(false); setUrl(null)
+    setError(false); setUrl(null); setBlob(null)
     supportApi.attachment(attachment.url, controller.signal).then(blob => {
       if (controller.signal.aborted) return
+      setBlob(blob)
       objectUrl = URL.createObjectURL(blob); setUrl(objectUrl)
     }).catch(() => { if (!controller.signal.aborted) setError(true) })
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [attachment.url, retry])
+  useEffect(() => {
+    if (!isAikayunApp()) return
+    const owner = `support-image:${attachment.id}`
+    setNativeOverlayOpen(open, owner)
+    return () => setNativeOverlayOpen(false, owner)
+  }, [attachment.id, open])
+  const saveImage = async () => {
+    if (!blob) return
+    try {
+      await saveBlobInNativeApp("聊天图片", blob)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "图片保存失败")
+    }
+  }
+  const shareImage = async () => {
+    if (!blob) return
+    try {
+      await shareImageInNativeApp("聊天图片", blob)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "图片分享失败")
+    }
+  }
+  const saveVectorAttachment = async () => {
+    if (!blob) return
+    try {
+      await saveBlobInNativeApp(`聊天附件-${attachment.id}.svg`, blob)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "附件保存失败")
+    }
+  }
   if (error) return <button type="button" className="inline-flex h-32 w-36 items-center justify-center rounded-control text-xs text-destructive" onClick={() => setRetry(value => value + 1)}>图片加载失败 · 重试</button>
   if (!url) return <span className="inline-flex h-32 w-36 items-center justify-center rounded-control text-xs text-muted-foreground">加载图片…</span>
-  if (attachment.content_type === "image/svg+xml") return <a href={url} download="附件.svg" className="text-xs underline">下载附件</a>
+  if (attachment.content_type === "image/svg+xml") return isAikayunApp()
+    ? <button type="button" onClick={() => void saveVectorAttachment()} className="text-xs underline">下载附件</button>
+    : <a href={url} download="附件.svg" className="text-xs underline">下载附件</a>
   return <>
     <button type="button" onClick={() => setOpen(true)} className="flex h-32 w-36 items-center justify-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="查看聊天图片">
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -488,6 +524,10 @@ function PrivateAttachment({ attachment }: { attachment: SupportAttachment }) {
       <DialogContent className="max-w-4xl border-0 bg-transparent p-0 shadow-none">
         <DialogTitle className="sr-only">聊天图片</DialogTitle>
         <DialogClose className="absolute right-2 top-2 z-10 inline-flex size-10 items-center justify-center rounded-full bg-background/80 text-foreground" aria-label="关闭图片"><X className="size-5" /></DialogClose>
+        {isAikayunApp() && <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-2 rounded-full bg-background/85 p-1.5 shadow-lg">
+          <Button type="button" size="sm" variant="secondary" onClick={() => void saveImage()}>保存图片</Button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => void shareImage()}>分享</Button>
+        </div>}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={url} alt="聊天图片" className="mx-auto max-h-[85dvh] max-w-full rounded-control object-contain" />
       </DialogContent>
