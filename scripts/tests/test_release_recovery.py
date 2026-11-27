@@ -111,6 +111,11 @@ with (root/'calls.log').open('a') as f: f.write('gh '+' '.join(args)+'\\n')
 run={'databaseId':42,'id':42,'status':'completed','conclusion':'success','headSha':fixture['sha'],'head_sha':fixture['sha'],'headBranch':'main','event':'workflow_dispatch'}
 jobs={'jobs':[{'name':'Publish immutable release manifest','conclusion':'success','steps':[]}]}
 if args[:2]==['run','list']:
+    if os.environ.get('NEW_RUN')=='1':
+        dispatched=(root/'dispatched').exists()
+        if '--jq' in args: print('42' if dispatched else '0')
+        else: print(json.dumps([run] if dispatched else []))
+        raise SystemExit(0)
     if os.environ.get('RUN_IN_PROGRESS')=='1': run['status']='in_progress';run['conclusion']=''
     if os.environ.get('FAILED_PUSH')=='1': run['conclusion']='failure'
     print(json.dumps([run]))
@@ -134,7 +139,8 @@ elif args[:2]==['run','download']:
     if not source.is_dir(): raise SystemExit(1)
     shutil.copytree(source,dest,dirs_exist_ok=True)
 elif args[:2]==['workflow','run']:
-    raise SystemExit('unexpected dispatch')
+    if os.environ.get('NEW_RUN')!='1': raise SystemExit('unexpected dispatch')
+    (root/'dispatched').touch()
 else: raise SystemExit('unexpected gh '+repr(args))
 """)
         gh.chmod(0o755)
@@ -345,6 +351,13 @@ for src in sources:
         self.assertIn('CI_REUSED run=42 status=running', result.stdout)
         self.assertIn('gh run watch 42', self.calls())
         self.assertNotIn('gh workflow run', self.calls())
+
+    def test_new_dispatch_supplies_the_validated_production_manifest(self):
+        result = self.release(NEW_RUN='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('CI_STARTED run=42', result.stdout)
+        self.assertIn('accepted_sha=' + self.base, self.calls())
+        self.assertIn('accepted_manifest={', self.calls())
 
     def test_forged_staging_record_and_tar_are_not_trusted(self):
         self.release(FAIL_COMPONENT='web')
