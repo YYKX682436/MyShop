@@ -1002,6 +1002,7 @@ export interface UserAccountOverview {
   current_upgrade_rank: number
   current_level_price: number | null
   has_higher_level: boolean
+  is_highest_level: boolean
   upgrade_available: boolean
   upgrades: AccountUpgradeOption[]
 }

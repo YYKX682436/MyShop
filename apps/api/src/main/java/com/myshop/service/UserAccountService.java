@@ -75,7 +75,8 @@ public class UserAccountService {
                                   BigDecimal rechargeMinAmount, BigDecimal rechargeMaxAmount,
                                   BigDecimal balance, String currentLevelName,
                                   int currentUpgradeRank, BigDecimal currentLevelPrice,
-                                  boolean hasHigherLevel, boolean upgradeAvailable,
+                                  boolean hasHigherLevel, boolean isHighestLevel,
+                                  boolean upgradeAvailable,
                                   List<UpgradeOption> upgrades) { }
 
     public record PaymentStart(UUID transactionId, UUID paymentId, AccountPaymentStatus status,
@@ -95,15 +96,15 @@ public class UserAccountService {
         BigDecimal minimum = rechargeLimit("recharge_min_amount", DEFAULT_RECHARGE_MIN);
         BigDecimal maximum = rechargeLimit("recharge_max_amount", DEFAULT_RECHARGE_MAX);
         if (admin) return new AccountOverview(true, false, minimum, maximum, null,
-                null, 0, null, false, false, List.of());
+                null, 0, null, false, false, false, List.of());
 
         SiteContext site = siteContextFor(user, true);
         if (site.owner()) return new AccountOverview(false, rechargeEnabled(), minimum, maximum,
                 user.getBalance(), levelName(user.getUserLevelId()), currentRank(user.getUserLevelId()),
-                null, false, false, List.of());
+                null, false, false, false, List.of());
         UserLevel current = levels.findById(user.getUserLevelId()).filter(UserLevel::isEnabled).orElse(null);
         if (current == null) return new AccountOverview(false, rechargeEnabled(), minimum, maximum,
-                user.getBalance(), null, 0, null, false, false, List.of());
+                user.getBalance(), null, 0, null, false, false, false, List.of());
         BigDecimal currentPrice = upgradePolicy.price(site.id(), current);
         List<UserLevel> all = levels.findAllOrdered().stream()
                 .sorted(Comparator.comparingInt(UserLevel::getUpgradeRank)).toList();
@@ -112,7 +113,7 @@ public class UserAccountService {
         List<UpgradeOption> options = upgradeOptions(current, site.id(), currentPrice, all);
         return new AccountOverview(false, rechargeEnabled(), minimum, maximum, user.getBalance(),
                 current.getName(), current.getUpgradeRank(), currentPrice, hasHigher,
-                !options.isEmpty(), options);
+                !hasHigher, !options.isEmpty(), options);
     }
 
     @Transactional

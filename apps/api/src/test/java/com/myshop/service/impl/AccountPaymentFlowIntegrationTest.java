@@ -161,6 +161,56 @@ class AccountPaymentFlowIntegrationTest {
     }
 
     @Test
+    void accountOverviewSeparatesHigherLevelsFromTheHighestLevel() {
+        UUID customer = user("overview-upgradeable", "0.00", defaultLevel, null);
+        level("overview-available", 100, true, new BigDecimal("29.00"), true, PricingType.RETAIL, null);
+
+        var upgradeable = accounts.overview(customer);
+        assertTrue(upgradeable.hasHigherLevel());
+        assertFalse(upgradeable.isHighestLevel());
+        assertTrue(upgradeable.upgradeAvailable());
+
+        jdbc.update("UPDATE user_levels SET enabled = false WHERE upgrade_rank = 100");
+        level("overview-locked", 200, false, null, false, PricingType.RETAIL, null);
+        var higherButLocked = accounts.overview(customer);
+        assertTrue(higherButLocked.hasHigherLevel());
+        assertFalse(higherButLocked.isHighestLevel());
+        assertFalse(higherButLocked.upgradeAvailable());
+
+        UUID topLevel = level("overview-top", 300, false, null, false, PricingType.RETAIL, null);
+        UUID topCustomer = user("overview-highest", "0.00", topLevel, null);
+        var highest = accounts.overview(topCustomer);
+        assertFalse(highest.hasHigherLevel());
+        assertTrue(highest.isHighestLevel());
+        assertFalse(highest.upgradeAvailable());
+    }
+
+    @Test
+    void accountOverviewNeverMarksRestrictedOrUnrankedAccountsAsHighest() {
+        UUID admin = user("overview-admin", "0.00", defaultLevel, null);
+        jdbc.update("UPDATE users SET role = 'ADMIN', user_no = NULL, user_level_id = NULL WHERE id = ?", admin);
+        assertFalse(accounts.overview(admin).isHighestLevel());
+
+        UUID owner = user("overview-owner", "0.00", defaultLevel, null);
+        UUID site = subsite(owner, "overview-owner");
+        SiteRequestContext.set(subsiteView(site));
+        try {
+            var ownerOverview = accounts.overview(owner);
+            assertFalse(ownerOverview.hasHigherLevel());
+            assertFalse(ownerOverview.isHighestLevel());
+        } finally {
+            SiteRequestContext.clear();
+        }
+
+        UUID disabledLevel = level("overview-disabled", 100, false, null, false, PricingType.RETAIL, null);
+        UUID unrankedCustomer = user("overview-unranked", "0.00", disabledLevel, null);
+        jdbc.update("UPDATE user_levels SET enabled = false WHERE id = ?", disabledLevel);
+        var unranked = accounts.overview(unrankedCustomer);
+        assertNull(unranked.currentLevelName());
+        assertFalse(unranked.isHighestLevel());
+    }
+
+    @Test
     void balanceUpgradeUsesThePriceDifferenceAndUpdatesLedgerAndLevelTogether() {
         UUID target = level("paid-level", 100, true, new BigDecimal("29.00"), true, PricingType.RETAIL, null);
         UUID customer = user("balance-upgrade", "100.00", defaultLevel, null);
@@ -174,6 +224,7 @@ class AccountPaymentFlowIntegrationTest {
         assertMoney("29.00", scalar("SELECT amount FROM account_payment_transactions WHERE id = ?", BigDecimal.class, result.transactionId()));
         assertMoney("-29.00", scalar("SELECT delta FROM balance_transactions WHERE account_payment_transaction_id = ? AND type = 'LEVEL_UPGRADE'", BigDecimal.class, result.transactionId()));
         assertEquals(1, scalar("SELECT count(*) FROM support_system_events WHERE source_type='ACCOUNT_PAYMENT' AND source_id=? AND event_type='LEVEL_UPGRADE_COMPLETED'", Integer.class, result.transactionId()));
+        assertTrue(accounts.overview(customer).isHighestLevel());
     }
 
     @Test
@@ -215,6 +266,9 @@ class AccountPaymentFlowIntegrationTest {
         assertEquals(result.transactionId(), attempt.getAccountPaymentTransactionId());
         assertMoney("29.00", attempt.getAmount());
         assertEquals("INTENT", attempt.getCreationStatus().name());
+        assertEquals("SUCCESS", confirmations.confirmPaid(attempt.getId(), paid(attempt, "last-level-online-event")));
+        assertEquals(target, scalar("SELECT user_level_id FROM users WHERE id = ?", UUID.class, customer));
+        assertTrue(accounts.overview(customer).isHighestLevel());
     }
 
     @Test

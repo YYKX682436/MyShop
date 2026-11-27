@@ -48,7 +48,7 @@ export function AccountAvatar({
   const displayState = getAvatarDisplayState(avatarUrl, imageState.avatarUrl, imageState.status)
 
   const avatar = (
-    <Avatar className="size-full overflow-hidden rounded-card border border-border-subtle bg-surface-muted shadow-sm">
+    <Avatar className="size-full overflow-hidden !rounded-card border border-border-subtle bg-surface-muted shadow-sm">
       {avatarUrl && (
         <AvatarImage
           key={avatarUrl}
@@ -61,7 +61,7 @@ export function AccountAvatar({
       {displayState === "loading" ? (
         <span className="flex size-full animate-pulse items-center justify-center rounded-card bg-foreground/[0.07]" aria-hidden="true" />
       ) : (
-        <AvatarFallback className="rounded-card bg-primary/10 text-2xl font-semibold text-primary sm:text-3xl">
+        <AvatarFallback className="!rounded-card bg-primary/10 text-2xl font-semibold text-primary sm:text-3xl">
           {fallbackCharacter || <UserRound className="size-9" strokeWidth={1.7} aria-hidden="true" />}
         </AvatarFallback>
       )}

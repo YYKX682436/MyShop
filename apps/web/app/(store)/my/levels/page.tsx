@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { ArrowLeft, Check, Crown, Search, TrendingDown } from "lucide-react"
 import { toast } from "sonner"
 import { PaymentActionRenderer } from "@/components/shared/payment-action-renderer"
@@ -16,6 +17,8 @@ export default function MyLevelsPage() {
   const { t } = useLocale()
   const { user, isLoggedIn, authLoaded, setUser } = useAuth()
   const userId = user?.id
+  const transactionId = typeof window === "undefined" ? null
+    : new URLSearchParams(window.location.search).get("payment_transaction")
   const [overview, setOverview] = useState<UserAccountOverview | null>(null)
   const [channels, setChannels] = useState<PublicPaymentChannel[]>([])
   const [targetLevelId, setTargetLevelId] = useState("")
@@ -23,6 +26,7 @@ export default function MyLevelsPage() {
   const [channelCode, setChannelCode] = useState("")
   const [transaction, setTransaction] = useState<AccountTransaction | null>(null)
   const [payment, setPayment] = useState<AccountPaymentCreateResult | null>(null)
+  const [transactionReturnResolved, setTransactionReturnResolved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
@@ -32,8 +36,6 @@ export default function MyLevelsPage() {
   const [specId, setSpecId] = useState("")
   const [priceCheck, setPriceCheck] = useState<ProductPriceCheck | null>(null)
   const [priceLoading, setPriceLoading] = useState(false)
-  const transactionId = typeof window === "undefined" ? null
-    : new URLSearchParams(window.location.search).get("payment_transaction")
 
   const selectedUpgrade = useMemo(
     () => overview?.upgrades.find((item) => item.level_id === targetLevelId) ?? overview?.upgrades[0] ?? null,
@@ -59,46 +61,65 @@ export default function MyLevelsPage() {
     if (!authLoaded) return
     if (!isLoggedIn || !userId) { setLoading(false); return }
     let cancelled = false
-    Promise.all([userAccountApi.getOverview(), paymentApi.getChannels()]).then(([nextOverview, nextChannels]) => {
+    setLoading(true)
+    userAccountApi.getOverview().then((nextOverview) => {
       if (cancelled) return
       setOverview(nextOverview)
       const first = nextOverview.upgrades[0]
       setTargetLevelId(first?.level_id ?? "")
       setPaymentMethod(first && Number(nextOverview.balance ?? 0) >= first.amount ? "BALANCE" : "ONLINE")
-      setChannels(nextChannels)
-      setChannelCode(nextChannels[0]?.channel_code ?? "")
       setLoading(false)
     }).catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [authLoaded, isLoggedIn, userId])
 
   useEffect(() => {
-    if (!transactionId || !isLoggedIn) return
+    if (!authLoaded || !isLoggedIn) return
     let cancelled = false
-    requestOrThrow(() => userAccountApi.getTransaction(transactionId)).then(async (value) => {
+    paymentApi.getChannels().then((nextChannels) => {
       if (cancelled) return
-      setTransaction(value)
-      setPayment({
-        payment_id: value.payment_id,
-        account_transaction_id: value.id,
-        transaction_id: value.id,
-        order_id: null,
-        status: value.payment_status ?? "PENDING",
-        creation_status: value.creation_status,
-        payment_method: value.payment_method,
-        payment_type: value.payment_type,
-        payment_channel_code: value.channel_code,
-        next_action: value.next_action,
-        expires_at: value.expires_at ?? null,
-      })
-      const refreshed = await requestOrThrow(() => userAccountApi.refreshTransaction(transactionId))
-      if (!cancelled) {
-        setTransaction(refreshed)
-        setPayment((current) => current ? { ...current, status: refreshed.payment_status ?? current.status, creation_status: refreshed.creation_status ?? current.creation_status, next_action: refreshed.next_action ?? current.next_action } : current)
-      }
-    }).catch((error) => { if (!cancelled) toast.error(getApiErrorMessage(error, t)) })
+      setChannels(nextChannels)
+      setChannelCode((current) => current || nextChannels[0]?.channel_code || "")
+    }).catch(() => { if (!cancelled) setChannels([]) })
     return () => { cancelled = true }
-  }, [transactionId, isLoggedIn, t])
+  }, [authLoaded, isLoggedIn])
+
+  useEffect(() => {
+    if (!authLoaded || !transactionId || !isLoggedIn) return
+    let cancelled = false
+    setTransactionReturnResolved(false)
+    const loadReturnedTransaction = async () => {
+      try {
+        const value = await requestOrThrow(() => userAccountApi.getTransaction(transactionId))
+        if (cancelled) return
+        setTransaction(value)
+        setPayment({
+          payment_id: value.payment_id,
+          account_transaction_id: value.id,
+          transaction_id: value.id,
+          order_id: null,
+          status: value.payment_status ?? "PENDING",
+          creation_status: value.creation_status,
+          payment_method: value.payment_method,
+          payment_type: value.payment_type,
+          payment_channel_code: value.channel_code,
+          next_action: value.next_action,
+          expires_at: value.expires_at ?? null,
+        })
+        const refreshed = await requestOrThrow(() => userAccountApi.refreshTransaction(transactionId))
+        if (!cancelled) {
+          setTransaction(refreshed)
+          setPayment((current) => current ? { ...current, status: refreshed.payment_status ?? current.status, creation_status: refreshed.creation_status ?? current.creation_status, next_action: refreshed.next_action ?? current.next_action } : current)
+        }
+      } catch (error) {
+        if (!cancelled) toast.error(getApiErrorMessage(error, t))
+      } finally {
+        if (!cancelled) setTransactionReturnResolved(true)
+      }
+    }
+    void loadReturnedTransaction()
+    return () => { cancelled = true }
+  }, [authLoaded, transactionId, isLoggedIn, t])
 
   const activeTransactionId = transaction?.id
   const activeTransactionStatus = transaction?.status
@@ -195,7 +216,28 @@ export default function MyLevelsPage() {
     } catch (error) { toast.error(getApiErrorMessage(error, t)) }
   }
 
-  if (!authLoaded || loading) return <div className="account-page space-y-4"><div className="h-8 w-36 animate-pulse rounded-full bg-foreground/[0.07]" /><div className="h-40 animate-pulse rounded-card bg-foreground/[0.05]" /></div>
+  const renderTransactionStatus = () => (
+    <div className="space-y-3">
+      {payment && transaction?.status === "PENDING" && (
+        <div className="rounded-card border border-border-subtle bg-surface-muted/50 p-4">
+          <PaymentActionRenderer action={payment.next_action}
+            loadState={payment.next_action ? "ready" : payment.creation_status === "INTENT" || payment.creation_status === "SUBMITTING" ? "loading" : "ready"}
+            retryAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>}
+            retryStatusAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>} />
+          <p className="mt-3 text-center text-xs text-muted-foreground">{t("my.purchasePending")}</p>
+        </div>
+      )}
+      {transaction?.status === "COMPLETED" && <p className="flex items-center gap-2 text-sm font-medium text-emerald-600"><Check className="size-4" aria-hidden="true" />{t("my.purchaseCompleted")}</p>}
+      {transaction?.status === "RECOVERED" && <p className="text-sm text-muted-foreground">{transaction.recovery_reason || t("my.upgradeRecovered")}</p>}
+      {transaction?.status === "EXPIRED" && <p className="text-sm text-muted-foreground">{t("my.purchaseExpired")}</p>}
+      {transaction?.status === "FAILED" && <p className="text-sm text-muted-foreground">{t("my.purchaseFailed")}</p>}
+    </div>
+  )
+  const isHighestLevel = overview?.is_highest_level === true
+  const showHighestLevelState = isHighestLevel && (!transactionId
+    || (transactionReturnResolved && transaction?.type === "LEVEL_UPGRADE"))
+
+  if (!authLoaded || loading || (Boolean(transactionId) && isLoggedIn && !transactionReturnResolved)) return <div className="account-page space-y-4"><div className="h-8 w-36 animate-pulse rounded-full bg-foreground/[0.07]" /><div className="h-40 animate-pulse rounded-card bg-foreground/[0.05]" /></div>
   if (!isLoggedIn || !user) return <div className="account-page space-y-4"><h1 className="text-2xl font-semibold">{t("my.upgradeTitle")}</h1><Link className="text-sm text-primary underline" href="/login?redirect=/my/levels">{t("nav.login")}</Link></div>
 
   return (
@@ -205,6 +247,28 @@ export default function MyLevelsPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("my.upgradeTitle")}</h1></div>
       </header>
 
+      <Image
+        src="/images/level-upgrade-banner.webp"
+        alt={t("my.levelUpgradeBannerAlt")}
+        width={1200}
+        height={500}
+        unoptimized
+        preload
+        sizes="(max-width: 768px) calc(100vw - 2rem), 832px"
+        className="block h-auto w-full rounded-card"
+      />
+
+      {showHighestLevelState ? (
+        <section className="content-surface flex flex-col items-center justify-center gap-3 rounded-card px-5 py-10 text-center sm:py-12">
+          <span className="flex size-12 items-center justify-center rounded-control bg-primary/10 text-primary">
+            <Crown className="size-6" aria-hidden="true" />
+          </span>
+          <h2 className="max-w-full text-lg font-semibold tracking-tight text-foreground sm:text-xl">{t("my.highestLevelTitle")}</h2>
+          <p className="max-w-full break-words text-base font-medium text-foreground">{overview?.current_level_name ?? user.user_level_name ?? "—"}</p>
+          {transaction?.type === "LEVEL_UPGRADE" && <div className="w-full max-w-md pt-2">{renderTransactionStatus()}</div>}
+        </section>
+      ) : (
+        <>
       <section className="content-surface space-y-4 rounded-card p-4 sm:p-5">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0"><p className="text-xs text-muted-foreground">{t("my.currentLevel")}</p><p className="mt-1 truncate text-lg font-semibold text-foreground">{overview?.current_level_name ?? user.user_level_name ?? "—"}</p></div>
@@ -247,17 +311,7 @@ export default function MyLevelsPage() {
           </form>
         ) : <p className="text-sm text-muted-foreground">{t("my.upgradeUnavailable")}</p>}
 
-        {payment && transaction?.status === "PENDING" && (
-          <div className="rounded-card border border-border-subtle bg-surface-muted/50 p-4">
-            <PaymentActionRenderer action={payment.next_action}
-              loadState={payment.next_action ? "ready" : payment.creation_status === "INTENT" || payment.creation_status === "SUBMITTING" ? "loading" : "ready"}
-              retryAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>}
-              retryStatusAction={<Button type="button" variant="outline" onClick={() => void refreshActiveTransaction()}>{t("my.refreshPayment")}</Button>} />
-            <p className="mt-3 text-center text-xs text-muted-foreground">{t("my.purchasePending")}</p>
-          </div>
-        )}
-        {transaction?.status === "COMPLETED" && <p className="flex items-center gap-2 text-sm font-medium text-emerald-600"><Check className="size-4" aria-hidden="true" />{t("my.purchaseCompleted")}</p>}
-        {transaction?.status === "RECOVERED" && <p className="text-sm text-muted-foreground">{transaction.recovery_reason || t("my.upgradeRecovered")}</p>}
+        {renderTransactionStatus()}
       </section>
 
       <section className="content-surface space-y-4 rounded-card p-4 sm:p-5">
@@ -285,6 +339,8 @@ export default function MyLevelsPage() {
           {priceCheck?.levels.length === 0 && !priceLoading && <p className="text-sm text-muted-foreground">{t("my.noPublicPrices")}</p>}
         </div>}
       </section>
+        </>
+      )}
     </div>
   )
 }

@@ -62,23 +62,14 @@ function LoadingAccount() {
           <div className="size-14 shrink-0 animate-pulse rounded-card bg-foreground/[0.07] sm:size-16" />
           <div className="min-w-0 flex-1 space-y-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="mt-0.5 flex min-w-0 max-w-full items-center gap-2">
-              <div className="h-6 w-28 min-w-0 animate-pulse rounded-full bg-foreground/[0.07]" />
-              <div className="h-3 w-20 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
-            </div>
+            <div className="h-6 w-40 max-w-full animate-pulse rounded-full bg-foreground/[0.07]" />
           </div>
         </div>
       </section>
       <section className="account-balance bg-surface p-2 sm:p-3" data-layout="account-balance" aria-hidden="true">
-        <div className="flex flex-col gap-0">
-          <div className="flex min-h-9 items-center justify-between gap-3">
-            <div className="h-4 w-14 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-4 w-20 animate-pulse rounded-full bg-foreground/[0.07]" />
-          </div>
-          <div className="flex min-h-10 items-center justify-between gap-3">
-            <div className="h-8 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-9 w-14 animate-pulse rounded-control bg-foreground/[0.07]" />
-          </div>
+        <div className="flex min-h-12 items-center justify-between gap-3 px-1 sm:px-2">
+          <div className="h-8 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
+          <div className="h-10 w-14 animate-pulse rounded-control bg-foreground/[0.07]" />
         </div>
       </section>
     </div>
@@ -182,7 +173,8 @@ export default function MyPage() {
   }
 
   const roleLabel = user.role === "SUPER_ADMIN" ? t("my.superAdminRole") : t("my.adminRole")
-  const identityBadge = isAdminRole(user.role) ? (
+  const isAdmin = isAdminRole(user.role)
+  const identityBadge = isAdmin ? (
     <Badge
       variant="secondary"
       className="min-w-0 max-w-full gap-1.5 overflow-hidden border-primary/20 bg-gradient-to-r from-primary/[0.08] via-primary/[0.12] to-primary/[0.06] text-primary dark:border-primary/30"
@@ -190,15 +182,14 @@ export default function MyPage() {
       <ShieldCheck className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">{roleLabel}</span>
     </Badge>
-  ) : user.user_level_name ? (
-    <Badge
-      variant="secondary"
-      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
-    >
-      <Crown className="size-3.5 shrink-0" aria-hidden="true" />
-      <span className="min-w-0 truncate">{user.user_level_name}</span>
-    </Badge>
   ) : null
+  const hasUserIdentity = !isAdmin && Boolean(user.user_level_name || user.user_no !== null)
+  const shouldShowUpgradeEntry = user.role === "USER" && !user.unlimited
+    && accountOverview !== null
+    && (accountOverview.has_higher_level || accountOverview.is_highest_level)
+  const balanceLabel = user.unlimited ? "∞" : formatYuan(user.balance)
+  const balanceIsHistoryLink = !user.unlimited && user.role === "USER"
+    && accountOverview !== null && !accountOverview.recharge_enabled
 
   return (
     <div className="account-page -mt-2 space-y-3 sm:space-y-4">
@@ -226,17 +217,25 @@ export default function MyPage() {
                 <span className="truncate">{user.username}</span>
               </button>
             </h2>
-            {(identityBadge || (!isAdminRole(user.role) && user.user_no !== null)) && (
-              <div className="mt-0.5 flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                {identityBadge}
-                {!isAdminRole(user.role) && user.user_no !== null && (
+            {isAdmin ? identityBadge : hasUserIdentity && (
+              <div className="mt-1 inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full border border-amber-200/80 bg-amber-50/75 px-2.5 py-1 text-xs font-medium leading-4 text-amber-900 dark:border-amber-300/20 dark:bg-amber-950/35 dark:text-amber-100">
+                {user.user_level_name && (
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <Crown className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{user.user_level_name}</span>
+                  </span>
+                )}
+                {user.user_level_name && user.user_no !== null && (
+                  <span className="h-3.5 w-px shrink-0 bg-amber-900/25 dark:bg-amber-100/25" aria-hidden="true" />
+                )}
+                {user.user_no !== null && (
                   <button
                     type="button"
                     onClick={handleCopyUserId}
                     aria-label={t("my.copyUserId")}
-                    className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    className="shrink-0 whitespace-nowrap text-current transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
-                    <span className="whitespace-nowrap">{t("my.userId").replace("{id}", String(user.user_no))}</span>
+                    {t("my.userId").replace("{id}", String(user.user_no))}
                   </button>
                 )}
               </div>
@@ -246,29 +245,25 @@ export default function MyPage() {
       </section>
 
       <section className="account-balance bg-surface p-2 sm:p-3" aria-label={t("my.balance")}>
-        <div className="flex flex-col gap-0">
-          <div className="flex min-h-9 items-center justify-between gap-3">
-            <p className="text-xs font-medium text-muted-foreground">{t("my.balance")}</p>
-            {!user.unlimited && <Link href="/my/balance#history" className="inline-flex min-h-9 shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-              {t("my.balanceDetails")}<ChevronRight className="size-3.5" aria-hidden="true" />
-            </Link>}
-          </div>
-          <div className="flex min-h-10 items-center justify-between gap-3">
-            <p className="min-w-0 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-              {user.unlimited ? "∞" : formatYuan(user.balance)}
-            </p>
-            {!user.unlimited && accountOverview?.recharge_enabled && (
-              <Link href="/my/balance" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-control bg-primary/10 px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-                {t("my.recharge")}
-              </Link>
-            )}
-          </div>
+        <div className="flex min-h-12 items-center justify-between gap-3 px-1 sm:px-2">
+          {balanceIsHistoryLink ? (
+            <Link href="/my/balance#history" aria-label={t("my.balanceHistory")} className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+              {balanceLabel}
+            </Link>
+          ) : (
+            <p className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums">{balanceLabel}</p>
+          )}
+          {!user.unlimited && accountOverview?.recharge_enabled && (
+            <Link href="/my/balance" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-control bg-primary/10 px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+              {t("my.recharge")}
+            </Link>
+          )}
         </div>
       </section>
 
-      {!user.unlimited && accountOverview?.upgrade_available && (
+      {shouldShowUpgradeEntry && (
         <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.levelUpgrade")}>
-          <AccountLink href="/my/levels" icon={Crown} label={`${user.user_level_name ? `${user.user_level_name} · ` : ""}${t("my.levelUpgrade")}`} />
+          <AccountLink href="/my/levels" icon={Crown} label={t("my.levelUpgrade")} />
         </section>
       )}
 
