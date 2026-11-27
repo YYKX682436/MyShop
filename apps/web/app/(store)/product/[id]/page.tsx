@@ -7,6 +7,7 @@ import { hasPurchasableStock } from "@/lib/product-stock"
 import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "@/components/shared/product-description"
 import { ProductSummary } from "./product-summary"
+import { AgentProductNotice } from "@/components/store/agent-product-notice"
 import { ScrollToTop } from "./scroll-to-top"
 import type { Metadata } from "next"
 import type { PublicPaymentChannel } from "@/types"
@@ -124,6 +125,8 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           <ProductSummary product={product} />
         </div>
       </div>
+
+      <AgentProductNotice product={product} />
 
       {/* Product Description */}
       {(product.detail_md?.trim() || product.description?.trim()) && (

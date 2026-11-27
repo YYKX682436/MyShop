@@ -155,6 +155,10 @@ export interface ProductCard {
 /** Full product detail (returned by GET /products/{id}) */
 export interface ProductDetail extends ProductCard {
   detail_md?: string
+  agent_notice_text?: string | null
+  agent_notice_show_in_detail?: boolean | null
+  agent_notice_version?: number | null
+  agent_notice_viewer_id?: string | null
   specs: ProductSpec[]
   spec_enabled?: boolean
   low_stock_threshold?: number
@@ -229,6 +233,9 @@ export interface AdminProductDetail {
   title: string
   description: string | null
   detail_md: string | null
+  agent_notice_text: string | null
+  agent_notice_show_in_detail: boolean
+  agent_notice_version: number
   cover_url: string | null
   cost_price: number | null
   retail_price: number

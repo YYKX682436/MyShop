@@ -36,6 +36,15 @@ public class Product extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String detailMd;
 
+    @Column(name = "agent_notice_text", columnDefinition = "TEXT")
+    private String agentNoticeText;
+
+    @Column(name = "agent_notice_show_in_detail", nullable = false, columnDefinition = "boolean not null default false")
+    private boolean agentNoticeShowInDetail = false;
+
+    @Column(name = "agent_notice_version", nullable = false, columnDefinition = "bigint not null default 0")
+    private long agentNoticeVersion = 0;
+
     private String coverUrl;
 
     @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)

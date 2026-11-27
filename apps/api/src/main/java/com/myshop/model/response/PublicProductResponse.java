@@ -38,6 +38,10 @@ public record PublicProductResponse(
         boolean specEnabled,
         List<PublicProductSpecResponse> specs,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        String agentNoticeText,
+        Boolean agentNoticeShowInDetail,
+        Long agentNoticeVersion,
+        UUID agentNoticeViewerId
 ) {
 }

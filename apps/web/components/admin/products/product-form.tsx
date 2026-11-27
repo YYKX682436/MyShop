@@ -11,6 +11,7 @@ import { FormSection, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { getCategoryChildren, getCategorySelection, getRootCategories } from "@/lib/categories"
@@ -66,6 +67,8 @@ export type ProductFormData = {
   title: string
   description: string
   detail_md: string
+  agent_notice_text: string
+  agent_notice_show_in_detail: boolean
   category_id: string
   cost_price: string
   retail_price: string
@@ -107,6 +110,8 @@ function emptyForm(): Omit<ProductFormData, "specs" | "overrides"> {
     title: "",
     description: "",
     detail_md: "",
+    agent_notice_text: "",
+    agent_notice_show_in_detail: false,
     category_id: "",
     cost_price: "",
     retail_price: "",
@@ -129,6 +134,8 @@ function getFormData(product: AdminProductDetail | null): Omit<ProductFormData, 
     title: product.title,
     description: product.description || "",
     detail_md: product.detail_md || "",
+    agent_notice_text: product.agent_notice_text || "",
+    agent_notice_show_in_detail: product.agent_notice_show_in_detail,
     category_id: product.category_id,
     cost_price: product.cost_price == null ? "" : String(product.cost_price),
     retail_price: String(product.retail_price),
@@ -395,6 +402,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       title: draft.title.trim(),
       description: draft.description || undefined,
       detail_md: draft.detail_md || undefined,
+      agent_notice_text: draft.agent_notice_text,
+      agent_notice_show_in_detail: draft.agent_notice_show_in_detail,
       cover_url: draft.cover_url || undefined,
       cost_price: draft.spec_enabled ? null : toNumberOrNull(draft.cost_price),
       retail_price: rootRetail,
@@ -1058,6 +1067,30 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
         <TabsContent value="details" data-testid="product-tab-panel-details">
             <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
+              <div className="mb-6 space-y-3">
+                <label htmlFor="agent_notice_text" className="flex flex-col gap-1.5 text-sm font-medium">
+                  {t("admin.agentNoticeLabel")}
+                  <Textarea
+                    id="agent_notice_text"
+                    value={draft.agent_notice_text}
+                    onChange={(event) => setField("agent_notice_text", event.target.value)}
+                    placeholder={t("admin.agentNoticePlaceholder")}
+                    rows={4}
+                    disabled={saving}
+                  />
+                </label>
+                <label htmlFor="agent_notice_show_in_detail" className="inline-flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    id="agent_notice_show_in_detail"
+                    type="checkbox"
+                    checked={draft.agent_notice_show_in_detail}
+                    onChange={(event) => setField("agent_notice_show_in_detail", event.target.checked)}
+                    disabled={saving}
+                    className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <span>{t("admin.agentNoticeShowInDetail")}</span>
+                </label>
+              </div>
               <div ref={registerField("detail_md")} tabIndex={-1}>
                 <Suspense fallback={<div className="content-surface min-h-52 p-4 text-sm text-muted-foreground" role="status">{t("common.loading")}</div>}>
                   <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage}

@@ -543,6 +543,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         if (!existingOverrides.isEmpty()) overrideRepository.deleteAllInBatch(existingOverrides);
 
         applyProduct(product, aggregate);
+        applyAgentNotice(product, request, creating);
         Product saved = productRepository.saveAndFlush(product);
         syncSpecs(saved, aggregate);
         saveOverrides(saved, desiredOverrides);
@@ -750,6 +751,31 @@ public class AdminProductServiceImpl implements AdminProductService {
         product.setSortWeight(aggregate.sortWeight());
     }
 
+    private void applyAgentNotice(Product product, AdminProductUpsertRequest request, boolean creating) {
+        String currentText = normalizeAgentNoticeText(product.getAgentNoticeText());
+        String requestedText = request.agentNoticeText();
+        String nextText = requestedText == null && !creating
+                ? currentText : normalizeAgentNoticeText(requestedText);
+        product.setAgentNoticeText(nextText);
+        product.setAgentNoticeVersion(nextAgentNoticeVersion(currentText, product.getAgentNoticeVersion(), nextText));
+
+        Boolean showInDetail = request.agentNoticeShowInDetail();
+        if (showInDetail != null || creating) {
+            product.setAgentNoticeShowInDetail(Boolean.TRUE.equals(showInDetail));
+        }
+    }
+
+    static String normalizeAgentNoticeText(String value) {
+        if (value == null) return null;
+        String normalized = value.replace("\r\n", "\n").replace('\r', '\n').strip();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    static long nextAgentNoticeVersion(String currentText, long currentVersion, String nextText) {
+        return Objects.equals(normalizeAgentNoticeText(currentText), normalizeAgentNoticeText(nextText))
+                ? currentVersion : currentVersion + 1;
+    }
+
     private void syncSpecs(Product product, PreparedAggregate aggregate) {
         List<ProductSpec> existing = productSpecRepository
                 .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
@@ -898,7 +924,8 @@ public class AdminProductServiceImpl implements AdminProductService {
                 sales, product.getInitialSales(),
                 product.isSpecEnabled(), product.isEnabled(), product.getSortWeight(), product.getLowStockThreshold(),
                 buildSpecResponses(product, specs, stock), overrides.stream().map(this::toOverride).toList(), matrix,
-                warnings, product.getCreatedAt(), product.getUpdatedAt());
+                warnings, product.getCreatedAt(), product.getUpdatedAt(), product.getAgentNoticeText(),
+                product.isAgentNoticeShowInDetail(), product.getAgentNoticeVersion());
     }
 
     private Map<UUID, ProductCategory> loadActiveCategoryMap() {

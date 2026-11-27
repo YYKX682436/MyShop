@@ -47,6 +47,9 @@ public record AdminProductResponse(
         List<AdminPricingMatrixResponse> pricingMatrix,
         List<String> warnings,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        String agentNoticeText,
+        boolean agentNoticeShowInDetail,
+        long agentNoticeVersion
 ) {
 }

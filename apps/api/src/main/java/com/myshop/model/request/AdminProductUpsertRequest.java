@@ -27,6 +27,20 @@ public record AdminProductUpsertRequest(
         StockMode stockMode,
         Integer manualStock,
         List<AdminProductSpecRequest> specs,
-        List<AdminProductOverrideRequest> overrides
+        List<AdminProductOverrideRequest> overrides,
+        String agentNoticeText,
+        Boolean agentNoticeShowInDetail
 ) {
+
+    public AdminProductUpsertRequest(String title, String description, String detailMd, String coverUrl,
+                                     BigDecimal costPrice, BigDecimal retailPrice, UUID categoryId,
+                                     Integer lowStockThreshold, Boolean specEnabled, Boolean isEnabled,
+                                     Integer initialSales, Integer sortWeight, String deliveryType,
+                                     List<?> customerInputFields, StockMode stockMode, Integer manualStock,
+                                     List<AdminProductSpecRequest> specs,
+                                     List<AdminProductOverrideRequest> overrides) {
+        this(title, description, detailMd, coverUrl, costPrice, retailPrice, categoryId,
+                lowStockThreshold, specEnabled, isEnabled, initialSales, sortWeight, deliveryType,
+                customerInputFields, stockMode, manualStock, specs, overrides, null, null);
+    }
 }

@@ -186,7 +186,8 @@ public class PublicProductServiceImpl implements PublicProductService {
                     return toResponse(product, specsByProduct.getOrDefault(product.getId(), List.of()),
                             resolvedPrices, stock, sales.getOrDefault(product.getId(), 0L), category,
                             ProductCategoryPath.from(category, categories), detail,
-                            SiteRequestContext.getSite() != null && requestUserId != null);
+                            SiteRequestContext.getSite() != null && requestUserId != null,
+                            requestUserId != null && level != null && !level.isDefault(), requestUserId);
                 })
                 .toList();
     }
@@ -201,7 +202,8 @@ public class PublicProductServiceImpl implements PublicProductService {
                                               Map<PriceTarget, PriceResolution> prices,
                                               Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock,
                                              long salesCount, ProductCategory category,
-                                             ProductCategoryPath categoryPath, boolean detail, boolean siteCustomer) {
+                                             ProductCategoryPath categoryPath, boolean detail, boolean siteCustomer,
+                                             boolean agentNoticeEligible, UUID requestUserId) {
         boolean hasSpecs = product.isSpecEnabled() && !specs.isEmpty();
         PriceResolution effectivePrice = hasSpecs
                 ? specs.stream()
@@ -217,6 +219,9 @@ public class PublicProductServiceImpl implements PublicProductService {
         List<PublicProductSpecResponse> specResponses = detail && hasSpecs
                 ? specs.stream().map(spec -> toSpecResponse(product, spec, prices, stock, siteCustomer)).toList()
                 : List.of();
+        String agentNoticeText = detail && agentNoticeEligible ? product.getAgentNoticeText() : null;
+        if (agentNoticeText != null && agentNoticeText.isBlank()) agentNoticeText = null;
+        boolean hasAgentNotice = agentNoticeText != null;
         return new PublicProductResponse(
                 product.getId(), product.getTitle(), product.getDescription(),
                 detail ? product.getDetailMd() : null, product.getCoverUrl(),
@@ -229,7 +234,10 @@ public class PublicProductServiceImpl implements PublicProductService {
                 customerFields(product,detail),
                 product.getStockMode().name(), salesCount,
                 product.getInitialSales(), product.isSpecEnabled(), specResponses,
-                product.getCreatedAt(), detail ? product.getUpdatedAt() : null);
+                product.getCreatedAt(), detail ? product.getUpdatedAt() : null,
+                agentNoticeText, hasAgentNotice ? product.isAgentNoticeShowInDetail() : null,
+                hasAgentNotice ? product.getAgentNoticeVersion() : null,
+                hasAgentNotice && agentNoticeEligible ? requestUserId : null);
     }
 
     private List<CustomerInputField> customerFields(Product product,boolean detail) {

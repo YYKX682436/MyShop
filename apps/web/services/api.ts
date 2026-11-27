@@ -945,6 +945,8 @@ export interface AdminProductUpsertPayload {
   title: string
   description?: string
   detail_md?: string
+  agent_notice_text?: string | null
+  agent_notice_show_in_detail?: boolean
   cover_url?: string
   cost_price: number | null
   retail_price?: number | null

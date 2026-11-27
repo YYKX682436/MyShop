@@ -36,7 +36,10 @@ print(
     "production schema migration contract matches source "
     f"(count={len(versions)}, latest={max(versions)})"
 )
-assert contract["tables"]["products"] == ["id", "title", "retail_price", "card_content_column_count"]
+assert contract["tables"]["products"] == [
+    "id", "title", "retail_price", "card_content_column_count",
+    "agent_notice_text", "agent_notice_show_in_detail", "agent_notice_version"
+]
 assert "account_payment_transaction_id" in contract["tables"]["payment_attempts"]
 assert "account_payment_transactions" in contract["tables"]
 assert "upgrade_rank" in contract["tables"]["user_levels"]
