@@ -79,10 +79,14 @@ import hashlib,json,sys
 from pathlib import Path
 sha,service=sys.argv[1:]
 root=Path('/srv/myshop-upload/staging')/sha
+if not (root/f'{service}.record.json').is_file() or not (root/f'{service}.tar').is_file():
+    raise SystemExit(1)
 record=json.loads((root/f'{service}.record.json').read_text())
 if record['source_sha'] != sha or record['service'] != service: raise SystemExit(1)
-digest=hashlib.file_digest((root/f'{service}.tar').open('rb'),'sha256').hexdigest()
-if digest != record['tar_sha256']: raise SystemExit(1)
+digest=hashlib.sha256()
+with (root/f'{service}.tar').open('rb') as file:
+    for chunk in iter(lambda: file.read(1024*1024), b''): digest.update(chunk)
+if digest.hexdigest() != record['tar_sha256']: raise SystemExit(1)
 PY
 REMOTE
 ); then
