@@ -206,7 +206,7 @@ fi
 for expected_header in \
   'X-Content-Type-Options "nosniff"' \
   'Referrer-Policy "strict-origin-when-cross-origin"' \
-  'Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"' \
+  'Permissions-Policy "camera=(), microphone=(), geolocation=(self), payment=()"' \
   'X-Frame-Options "DENY"' \
   'header @https Strict-Transport-Security "max-age=31536000; includeSubDomains"'; do
   if ! grep -Fq "$expected_header" "$repo_dir/Caddyfile"; then
