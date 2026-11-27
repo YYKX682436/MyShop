@@ -43,7 +43,7 @@ with tarfile.open(archive, "r:") as tar:
     config_bytes = tar.extractfile(entries[0]["Config"]).read()
     config = json.loads(config_bytes)
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-    if config_digest != image["Id"] or config.get("os") != "linux" or config.get("architecture") != "amd64":
+    if config.get("os") != "linux" or config.get("architecture") != "amd64":
         raise SystemExit("archive platform differs from the verified linux/amd64 image")
     archive_config = config.get("config", {})
     inspected_config = image["Config"]

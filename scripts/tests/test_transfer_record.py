@@ -53,6 +53,12 @@ class TransferRecordTests(unittest.TestCase):
             passed = subprocess.run(command, env=env, text=True, capture_output=True)
             self.assertEqual(passed.returncode, 0, passed.stderr)
             self.assertEqual(json.loads(record.read_text())["image_id"], image_id)
+            inspected["Id"] = "sha256:" + "d" * 64
+            metadata.write_text(json.dumps([inspected]))
+            exported_variant = subprocess.run(command, env=env, text=True, capture_output=True)
+            self.assertEqual(exported_variant.returncode, 0, exported_variant.stderr)
+            self.assertEqual(json.loads(record.read_text())["image_id"], inspected["Id"])
+            self.assertEqual(json.loads(record.read_text())["exported_config_digest"], image_id)
             inspected["Config"]["User"] = "root"
             metadata.write_text(json.dumps([inspected]))
             failed = subprocess.run(command, env=env, text=True, capture_output=True)

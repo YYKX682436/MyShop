@@ -162,9 +162,11 @@ for service in APP_SERVICES:
         if record_path.is_symlink() or not record_path.is_file():
             fail(f"{service} CI transfer record is missing or unsafe")
         transfer = json.loads(record_path.read_text(encoding="utf-8"))
-        if transfer != {
+        if not isinstance(transfer, dict) or not DIGEST.fullmatch(str(transfer.get("image_id", ""))):
+            fail(f"{service} CI image ID is invalid")
+        if {key: value for key, value in transfer.items() if key != "image_id"} != {
             "version": 1, "service": service, "source_sha": image_source_sha,
-            "registry_digest": source_digest, "image_id": config_digest,
+            "registry_digest": source_digest,
             "exported_config_digest": config_digest,
             "runtime_config_digest": image["runtime_config_digest"],
             "tar_sha256": image["archive_sha256"], "archive_tag": archive_ref,
