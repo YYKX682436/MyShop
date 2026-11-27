@@ -275,6 +275,7 @@ export function ConfirmAlert({
   destructive = false,
   loading = false,
   confirmDisabled = false,
+  footerClassName,
   children,
 }: {
   open: boolean
@@ -287,6 +288,7 @@ export function ConfirmAlert({
   destructive?: boolean
   loading?: boolean
   confirmDisabled?: boolean
+  footerClassName?: string
   children?: ReactNode
 }) {
   return (
@@ -297,7 +299,7 @@ export function ConfirmAlert({
           {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
         </AlertDialogHeader>
         {children}
-        <AlertDialogFooter>
+        <AlertDialogFooter className={footerClassName}>
           <AlertDialogCancel disabled={loading}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             disabled={loading || confirmDisabled}

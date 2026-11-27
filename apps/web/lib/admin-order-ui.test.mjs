@@ -329,26 +329,6 @@ test("admin order mutations publish one shared invalidation after each detail mu
   assert.match(routeSource, /invalidateAdminAttention\(\)/)
 })
 
-test("manual payment confirmation has one input-free confirmation for pending and expired online orders", () => {
-  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
-  const translations = readSource("./i18n.ts")
-  const eligibility = routeSource.match(/const canMarkPaid =([\s\S]*?)\n  const markPaidButton/)?.[1] ?? ""
-  const dialog = routeSource.match(/const confirmDialog = \(([\s\S]*?)\n  const refundDialog/)?.[1] ?? ""
-
-  assert.match(eligibility, /"PENDING"/)
-  assert.match(eligibility, /"EXPIRED"/)
-  assert.match(eligibility, /order\.payment_method === "ONLINE"/)
-  assert.doesNotMatch(eligibility, /expires_at|payment_channel_code/)
-  assert.match(dialog, /<dialog/)
-  assert.match(routeSource, /\.showModal\(\)/)
-  assert.match(dialog, /admin\.cancel/)
-  assert.match(dialog, /admin\.markPaidBtn/)
-  assert.doesNotMatch(dialog, /<input|<Textarea|required|markPaidReason/)
-  assert.doesNotMatch(routeSource, /markPaidReason/)
-  assert.match(translations, /"admin\.markPaidDescription": "确定该订单已收到付款吗？确认后系统将按正常流程发货。"/)
-  assert.match(translations, /"admin\.markPaidConfirm": "确认支付"/)
-})
-
 test("order numbers stay opaque display strings and order links use internal UUIDs", () => {
   const orderPage = readSource("../app/(store)/order/[orderId]/page.tsx")
   const supportThread = readSource("../components/shared/support-thread.tsx")

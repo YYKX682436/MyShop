@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { CheckCircle, Loader2, ShieldAlert, XCircle } from "lucide-react"
 import { toast } from "sonner"
 
@@ -39,9 +39,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [manualFulfillmentLoading, setManualFulfillmentLoading] = useState(false)
   const [markPaidOpen, setMarkPaidOpen] = useState(false)
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
-  const markPaidDialogRef = useRef<HTMLDialogElement>(null)
-  const markPaidTitleId = useId()
-  const markPaidDescriptionId = useId()
+  const [markPaidError, setMarkPaidError] = useState<string | null>(null)
+  const markPaidRequestInFlight = useRef(false)
   const [refundOpen, setRefundOpen] = useState(false)
   const [refundReason, setRefundReason] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
@@ -94,13 +93,6 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   useEffect(() => { void load() }, [load])
 
-  useEffect(() => {
-    const dialog = markPaidDialogRef.current
-    if (!dialog) return
-    if (markPaidOpen && !dialog.open) dialog.showModal()
-    else if (!markPaidOpen && dialog.open) dialog.close()
-  }, [markPaidOpen])
-
   const refreshSupplier = async (purchaseId: string) => {
     setRefreshingSupplier(purchaseId)
     try {
@@ -144,7 +136,9 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   }
 
   const handleMarkPaid = async () => {
-    if (!order || markPaidLoading) return
+    if (!order || markPaidRequestInFlight.current) return
+    markPaidRequestInFlight.current = true
+    setMarkPaidError(null)
     setMarkPaidLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.markPaid(orderId))
@@ -155,8 +149,9 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       setMarkPaidOpen(false)
       await load()
     } catch (requestError: unknown) {
-      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+      setMarkPaidError(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
+      markPaidRequestInFlight.current = false
       setMarkPaidLoading(false)
     }
   }
@@ -284,7 +279,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     && order.order_type === "NORMAL"
     && order.payment_method === "ONLINE"
   const markPaidButton = canMarkPaid ? (
-    <Button type="button" onClick={() => setMarkPaidOpen(true)} disabled={markPaidLoading}>
+    <Button type="button" onClick={() => { setMarkPaidError(null); setMarkPaidOpen(true) }} disabled={markPaidLoading}>
       <CheckCircle className="size-4" aria-hidden="true" />
       {t("admin.markPaid")}
     </Button>
@@ -351,26 +346,27 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   ) : null
 
   const confirmDialog = (
-    <dialog
-      ref={markPaidDialogRef}
-      aria-labelledby={markPaidTitleId}
-      aria-describedby={markPaidDescriptionId}
-      className="myshop-dialog static-material fixed left-1/2 top-1/2 m-0 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-surface p-6 text-foreground"
-      onClose={() => setMarkPaidOpen(false)}
-      onCancel={(event) => { if (markPaidLoading) event.preventDefault() }}
+    <ConfirmAlert
+      open={markPaidOpen}
+      onOpenChange={(open) => {
+        if (open) {
+          setMarkPaidError(null)
+          setMarkPaidOpen(true)
+        } else if (!markPaidRequestInFlight.current) {
+          setMarkPaidError(null)
+          setMarkPaidOpen(false)
+        }
+      }}
+      title={t("admin.markPaidConfirm")}
+      description={t("admin.markPaidDescription")}
+      confirmLabel={t("admin.markPaidBtn")}
+      cancelLabel={t("admin.cancel")}
+      loading={markPaidLoading}
+      footerClassName="flex-col"
+      onConfirm={() => void handleMarkPaid()}
     >
-      <h1 id={markPaidTitleId} className="text-lg font-semibold">{t("admin.markPaidConfirm")}</h1>
-      <p id={markPaidDescriptionId} className="mt-2 text-sm text-muted-foreground">{t("admin.markPaidDescription")}</p>
-      <form method="dialog" className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="submit" formMethod="dialog" value="cancel" variant="outline" autoFocus disabled={markPaidLoading} onClick={() => setMarkPaidOpen(false)}>
-          {t("admin.cancel")}
-        </Button>
-        <Button type="button" disabled={markPaidLoading} onClick={() => void handleMarkPaid()}>
-          {markPaidLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-          {t("admin.markPaidBtn")}
-        </Button>
-      </form>
-    </dialog>
+      {markPaidError && <p role="alert" className="rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{markPaidError}</p>}
+    </ConfirmAlert>
   )
 
   const refundDialog = (
@@ -511,12 +507,12 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         headerActions={actionArea}
       >
         {detailContent}
+        {confirmDialog}
+        {refundDialog}
+        {afterSaleRejectDialog}
+        {afterSaleApproveDialog}
+        {manualFulfillmentDialog}
       </WorkspaceSheet>
-      {confirmDialog}
-      {refundDialog}
-      {afterSaleRejectDialog}
-      {afterSaleApproveDialog}
-      {manualFulfillmentDialog}
     </>
   )
 }

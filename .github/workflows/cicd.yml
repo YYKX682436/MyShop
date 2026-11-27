@@ -215,6 +215,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @myshop/web exec tsc --noEmit
       - run: pnpm --filter @myshop/web test:logic
+      - name: Install Chromium for the focused admin payment regression
+        run: pnpm --filter @myshop/web exec playwright install chromium
+      - run: pnpm --filter @myshop/web test:admin-order-confirmation-ui
       - run: pnpm --filter @myshop/web test:legacy-image-cache
       - run: pnpm --filter @myshop/web lint
       - name: Build Next.js once for the image when Web changed

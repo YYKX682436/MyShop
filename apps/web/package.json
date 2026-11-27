@@ -27,6 +27,7 @@
     "test:supplier-order-ui": "node scripts/test-supplier-order-ui.mjs",
     "test:supplier-aftercare-ui": "node scripts/test-supplier-aftercare-ui.mjs",
     "test:admin-refresh-ui": "node scripts/test-admin-refresh-ui.mjs",
+    "test:admin-order-confirmation-ui": "node scripts/test-admin-order-confirmation-ui.mjs",
     "test:admin-user-sync": "node scripts/test-admin-user-sync.mjs",
     "test:admin-product-list-sync": "node scripts/test-admin-product-list-sync.mjs",
     "clean": "node scripts/clear-cache.mjs",

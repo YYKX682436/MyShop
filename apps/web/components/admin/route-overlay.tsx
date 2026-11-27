@@ -149,7 +149,7 @@ export function InspectorSheet({ children, title, description, footer, dirty = f
           }
         }}
       >
-        <SheetHeader className="border-b border-border-subtle px-5 py-5 pr-14 sm:px-6">
+        <SheetHeader className="border-b border-border-subtle pl-5 pr-16 py-5 sm:pl-6 sm:pr-16">
           <SheetTitle className="tracking-tight">{title}</SheetTitle>
           {description && <SheetDescription className="break-all">{description}</SheetDescription>}
         </SheetHeader>
@@ -176,12 +176,12 @@ export function WorkspaceSheet({ children, title, description, headerActions, di
           }
         }}
       >
-        <SheetHeader className="flex-row items-start justify-between border-b border-border-subtle px-5 py-5 pr-14 sm:px-6">
-          <div className="min-w-0">
+        <SheetHeader className="flex-col items-stretch gap-3 space-y-0 border-b border-border-subtle pl-5 pr-16 py-5 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:pl-6 sm:pr-16">
+          <div className="min-w-0 sm:flex-1">
             <SheetTitle className="tracking-tight">{title}</SheetTitle>
             {description && <SheetDescription className="mt-2 max-w-2xl">{description}</SheetDescription>}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div data-testid="workspace-header-actions" className="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:flex-1 sm:justify-end">
             {headerActions}
             {dirty && <span className="admin-warning-badge hidden rounded-full px-2.5 py-0.5 text-xs font-medium sm:inline-flex">{t("admin.unsavedChanges")}</span>}
           </div>
