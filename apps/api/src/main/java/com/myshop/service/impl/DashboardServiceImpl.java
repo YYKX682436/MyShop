@@ -2,16 +2,21 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.UserRole;
+import com.myshop.entity.Product;
+import com.myshop.entity.ProductSpec;
 import com.myshop.entity.User;
 import com.myshop.entity.VisitStats;
+import com.myshop.model.pricing.PriceTarget;
 import com.myshop.model.response.DashboardStatsResponse;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.ProductRepository;
+import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.VisitStatsRepository;
 import com.myshop.service.DashboardService;
+import com.myshop.service.ProductInventoryBatchService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +28,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +44,8 @@ public class DashboardServiceImpl implements DashboardService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
+    private final ProductSpecRepository productSpecRepository;
+    private final ProductInventoryBatchService inventoryBatchService;
     private final CardKeyRepository cardKeyRepository;
     private final VisitStatsRepository visitStatsRepository;
     private final UserRepository userRepository;
@@ -47,6 +55,8 @@ public class DashboardServiceImpl implements DashboardService {
     public DashboardServiceImpl(OrderRepository orderRepository,
                                 OrderItemRepository orderItemRepository,
                                 ProductRepository productRepository,
+                                ProductSpecRepository productSpecRepository,
+                                ProductInventoryBatchService inventoryBatchService,
                                 CardKeyRepository cardKeyRepository,
                                 VisitStatsRepository visitStatsRepository,
                                 UserRepository userRepository,
@@ -54,6 +64,8 @@ public class DashboardServiceImpl implements DashboardService {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
+        this.productSpecRepository = productSpecRepository;
+        this.inventoryBatchService = inventoryBatchService;
         this.cardKeyRepository = cardKeyRepository;
         this.visitStatsRepository = visitStatsRepository;
         this.userRepository = userRepository;
@@ -104,28 +116,39 @@ public class DashboardServiceImpl implements DashboardService {
                 ? 0
                 : (double) successfulPayments / paymentSampleCount * 100;
 
-        // One grouped PostgreSQL read replaces the per-product loop plus one
-        // stock count per product. It selects the source by stock mode;
-        // unlimited products return NULL and are excluded from both counters.
-        List<Object[]> stockRows = safeRows(productRepository.findActiveProductStockSummaries());
+        List<Product> activeProducts = productRepository.findActiveProductsForDashboard();
+        List<UUID> activeProductIds = activeProducts.stream().map(Product::getId).toList();
+        Map<UUID, List<ProductSpec>> specsByProduct = activeProductIds.isEmpty()
+                ? Map.of()
+                : productSpecRepository.findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
+                        activeProductIds, 0, true).stream()
+                        .collect(Collectors.groupingBy(ProductSpec::getProductId));
+        Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock =
+                inventoryBatchService.load(activeProducts, specsByProduct);
         List<DashboardStatsResponse.LowStockProduct> lowStockProducts = new ArrayList<>();
-        long zeroStockProducts = 0;
-        for (Object[] row : stockRows) {
-            UUID productId = (UUID) row[0];
-            String title = String.valueOf(row[1]);
-            int threshold = number(row[2]).intValue();
-            // UNLIMITED products intentionally return SQL NULL and never
-            // participate in zero/low-stock counters.
-            if (row[3] == null) continue;
-            long availableStock = number(row[3]).longValue();
-            if (availableStock == 0) {
-                zeroStockProducts++;
-            }
-            if (availableStock <= threshold) {
-                lowStockProducts.add(new DashboardStatsResponse.LowStockProduct(
-                        productId, title, availableStock, threshold));
+        long zeroStockItems = 0;
+        for (Product product : activeProducts) {
+            if (product.isSpecEnabled()) {
+                for (ProductSpec spec : specsByProduct.getOrDefault(product.getId(), List.of())) {
+                    DashboardStatsResponse.LowStockProduct warning = lowStockProduct(
+                            product, spec, stock.get(new PriceTarget(product.getId(), spec.getId())));
+                    if (warning != null) {
+                        lowStockProducts.add(warning);
+                        if (isActuallyOutOfStock(warning)) zeroStockItems++;
+                    }
+                }
+            } else {
+                DashboardStatsResponse.LowStockProduct warning = lowStockProduct(
+                        product, null, stock.get(new PriceTarget(product.getId(), null)));
+                if (warning != null) {
+                    lowStockProducts.add(warning);
+                    if (isActuallyOutOfStock(warning)) zeroStockItems++;
+                }
             }
         }
+        lowStockProducts.sort(Comparator.comparingLong(DashboardStatsResponse.LowStockProduct::availableStock)
+                .thenComparing(DashboardStatsResponse.LowStockProduct::title)
+                .thenComparing(item -> item.specName() == null ? "" : item.specName()));
 
         // TOP 5 is grouped, filtered, sorted, and limited by PostgreSQL; no
         // order item collection is loaded into the JVM for this panel.
@@ -169,9 +192,9 @@ public class DashboardServiceImpl implements DashboardService {
                 outcomes.getOrDefault(OrderStatus.EXPIRED, 0L),
                 rounded(paymentSuccessRate),
                 paymentSampleCount,
-                stockRows.size(),
+                activeProducts.size(),
                 cardKeyRepository.countAvailableForActiveCardKeyProducts(),
-                zeroStockProducts,
+                zeroStockItems,
                 lowStockProducts,
                 topProducts,
                 recentUsers);
@@ -232,6 +255,32 @@ public class DashboardServiceImpl implements DashboardService {
     private DashboardStatsResponse.RecentUser toRecentUser(User user) {
         return new DashboardStatsResponse.RecentUser(
                 user.getId(), user.getUsername(), user.getEmail(), user.getCreatedAt());
+    }
+
+    private DashboardStatsResponse.LowStockProduct lowStockProduct(
+            Product product, ProductSpec spec, ProductInventoryBatchService.StockSnapshot snapshot) {
+        if (snapshot == null || snapshot.unlimited() || snapshot.available() == null
+                || isUnconfirmedStockState(snapshot.status())
+                || snapshot.available() > product.getLowStockThreshold()) {
+            return null;
+        }
+        return new DashboardStatsResponse.LowStockProduct(
+                product.getId(), product.getTitle(), spec == null ? null : spec.getId(),
+                spec == null ? null : spec.getName(), snapshot.available(), product.getLowStockThreshold(),
+                snapshot.status());
+    }
+
+    private boolean isUnconfirmedStockState(String status) {
+        return "UNKNOWN".equals(status)
+                || "SYNC_FAILED".equals(status)
+                || "STALE".equals(status)
+                || "ACCOUNT_UNAVAILABLE".equals(status)
+                || "INVALID_DATA".equals(status)
+                || "UNMAPPED".equals(status);
+    }
+
+    private boolean isActuallyOutOfStock(DashboardStatsResponse.LowStockProduct item) {
+        return item.availableStock() == 0 && "OUT_OF_STOCK".equals(item.stockStatus());
     }
 
     private static List<Object[]> safeRows(List<Object[]> rows) {

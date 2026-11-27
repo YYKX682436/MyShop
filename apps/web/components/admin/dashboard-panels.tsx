@@ -301,6 +301,15 @@ export function InventoryHealthCard({ stats }: { stats: DashboardStats }) {
   )
 }
 
+const dashboardStockStatusKeys: Record<string, TranslationKey> = {
+  OUT_OF_STOCK: "admin.stockStatusOutOfStock",
+  MULTIPLE_SHORTAGE: "admin.stockStatusMultipleShortage",
+  BELOW_MINIMUM: "admin.stockStatusBelowMinimum",
+  LOCAL_UNAVAILABLE: "admin.stockStatusLocalUnavailable",
+  UPSTREAM_UNAVAILABLE: "admin.stockStatusUpstreamUnavailable",
+  INPUT_UNSUPPORTED: "admin.stockStatusInputUnsupported",
+}
+
 export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
   const { locale, t } = useLocale()
   return (
@@ -310,15 +319,22 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
       ) : (
         <div className="dashboard-list-group dashboard-list-group--warning">
           {products.map((product) => (
-            <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center justify-between gap-3 px-3 py-2.5">
+            <div key={`${product.product_id}:${product.spec_id ?? ""}`} className="dashboard-list-item flex min-w-0 items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground" title={product.title}>{product.title}</p>
+                <p
+                  className="truncate text-sm font-medium text-foreground"
+                  title={product.spec_name ? `${product.title} · ${product.spec_name}` : product.title}
+                >
+                  {product.spec_name ? `${product.title} · ${product.spec_name}` : product.title}
+                </p>
                 <p className="text-xs text-muted-foreground">
-                  {t("admin.lowStockProducts")} · {formatNumber(product.threshold, locale)}
+                  {dashboardStockStatusKeys[product.stock_status]
+                    ? t(dashboardStockStatusKeys[product.stock_status])
+                    : `${t("admin.lowStockProducts")} · ${formatNumber(product.threshold, locale)}`}
                 </p>
               </div>
               <span className="admin-warning-badge shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium">
-                {t("admin.remaining")} {formatNumber(product.available_stock, locale)}
+                {t("admin.availableStock")} {formatNumber(product.available_stock, locale)}
               </span>
             </div>
           ))}

@@ -624,8 +624,11 @@ export interface CreateOrderRequest {
 export interface LowStockProduct {
   product_id: string
   title: string
+  spec_id: string | null
+  spec_name: string | null
   available_stock: number
   threshold: number
+  stock_status: string
 }
 
 export interface DashboardTopProduct {

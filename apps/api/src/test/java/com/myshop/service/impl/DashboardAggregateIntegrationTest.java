@@ -72,10 +72,12 @@ class DashboardAggregateIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbcTemplate.execute("DELETE FROM card_keys");
+        jdbcTemplate.execute("DELETE FROM manual_stocks");
         jdbcTemplate.execute("DELETE FROM order_items");
         jdbcTemplate.execute("DELETE FROM after_sale_attachments");
         jdbcTemplate.execute("DELETE FROM after_sale_requests");
         jdbcTemplate.execute("DELETE FROM orders");
+        jdbcTemplate.execute("DELETE FROM product_specs");
         jdbcTemplate.execute("DELETE FROM products");
         jdbcTemplate.execute("DELETE FROM users");
         jdbcTemplate.execute("DELETE FROM visit_stats");
@@ -138,6 +140,60 @@ class DashboardAggregateIntegrationTest {
     }
 
     @Test
+    void dashboardUsesVisibleSpecAndUnifiedLocalInventorySnapshots() {
+        LocalDate today = LocalDate.now(CLOCK);
+        LocalDateTime start = today.atStartOfDay();
+        UUID cardProduct = UUID.randomUUID();
+        UUID manualProduct = UUID.randomUUID();
+        UUID specProduct = UUID.randomUUID();
+        UUID unlimitedProduct = UUID.randomUUID();
+        UUID disabledProduct = UUID.randomUUID();
+        UUID deletedProduct = UUID.randomUUID();
+        insertProduct(cardProduct, "Card stock", 10, true, 0, start, "CARD_KEY", false);
+        insertProduct(manualProduct, "Manual stock", 10, true, 0, start, "MANUAL", false);
+        insertProduct(specProduct, "Plans", 10, true, 0, start, "CARD_KEY", true);
+        insertProduct(unlimitedProduct, "Unlimited", 10, true, 0, start, "UNLIMITED", false);
+        insertProduct(disabledProduct, "Disabled", 10, false, 0, start, "CARD_KEY", false);
+        insertProduct(deletedProduct, "Deleted", 10, true, 1, start, "CARD_KEY", false);
+        jdbcTemplate.update("INSERT INTO manual_stocks(product_id, spec_id, available_quantity, reserved_quantity) VALUES (?, NULL, 8, 0)",
+                manualProduct);
+
+        UUID monthSpec = insertSpec(specProduct, "Month card", true, 0);
+        UUID yearSpec = insertSpec(specProduct, "Year card", true, 0);
+        UUID lifetimeSpec = insertSpec(specProduct, "Lifetime", true, 0);
+        UUID hiddenSpec = insertSpec(specProduct, "Hidden", false, 0);
+        UUID deletedSpec = insertSpec(specProduct, "Deleted spec", true, 1);
+        insertCard(cardProduct, "card-stock-1", "AVAILABLE", start.plusMinutes(1));
+        insertCard(cardProduct, "card-stock-2", "AVAILABLE", start.plusMinutes(2));
+        insertCard(cardProduct, "card-stock-3", "AVAILABLE", start.plusMinutes(3));
+        insertCard(cardProduct, "card-stock-4", "AVAILABLE", start.plusMinutes(4));
+        insertCard(cardProduct, "card-stock-5", "AVAILABLE", start.plusMinutes(5));
+        for (int index = 0; index < 100; index++) {
+            insertCard(specProduct, "lifetime-stock-" + index, "AVAILABLE", start.plusMinutes(8 + index), lifetimeSpec);
+        }
+        insertCard(specProduct, "hidden-stock", "AVAILABLE", start.plusMinutes(120), hiddenSpec);
+        insertCard(specProduct, "deleted-spec-stock", "AVAILABLE", start.plusMinutes(121), deletedSpec);
+        insertCard(disabledProduct, "disabled-stock", "AVAILABLE", start.plusMinutes(122));
+        insertCard(deletedProduct, "deleted-stock", "AVAILABLE", start.plusMinutes(123));
+
+        DashboardStatsResponse stats = dashboardService.getStats();
+
+        assertEquals(4L, stats.activeProducts());
+        assertEquals(4, stats.lowStockProducts().size());
+        assertEquals(2L, stats.zeroStockProducts());
+        assertEquals(1L, stats.lowStockProducts().stream().filter(item -> cardProduct.equals(item.productId())).count());
+        assertEquals(1L, stats.lowStockProducts().stream().filter(item -> manualProduct.equals(item.productId())).count());
+        assertEquals(2L, stats.lowStockProducts().stream().filter(item -> specProduct.equals(item.productId())).count());
+        assertEquals(List.of(monthSpec, yearSpec), stats.lowStockProducts().stream()
+                .filter(item -> specProduct.equals(item.productId()))
+                .map(DashboardStatsResponse.LowStockProduct::specId).toList());
+        assertEquals(0L, stats.lowStockProducts().stream()
+                .filter(item -> unlimitedProduct.equals(item.productId())
+                        || disabledProduct.equals(item.productId()) || deletedProduct.equals(item.productId()))
+                .count());
+    }
+
+    @Test
     void postgresDistinctBuyerCountUsesUserSessionAndOrderFallback() {
         LocalDate today = LocalDate.now(CLOCK);
         LocalDateTime start = today.atStartOfDay();
@@ -184,19 +240,40 @@ class DashboardAggregateIntegrationTest {
 
     private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,
                                LocalDateTime createdAt) {
+        insertProduct(id, title, threshold, enabled, deleted, createdAt, "CARD_KEY", false);
+    }
+
+    private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,
+                               LocalDateTime createdAt, String stockMode, boolean specEnabled) {
         jdbcTemplate.update("""
                 INSERT INTO products(id, created_at, updated_at, title, retail_price, cost_price, category_id,
-                                     low_stock_threshold, is_enabled, is_deleted)
-                VALUES (?, ?, ?, ?, 10.00, 10.00, ?, ?, ?, ?)
-                """, id, createdAt, createdAt, title, UUID.randomUUID(), threshold, enabled, deleted);
+                                     low_stock_threshold, is_enabled, is_deleted, stock_mode, spec_enabled)
+                VALUES (?, ?, ?, ?, 10.00, 10.00, ?, ?, ?, ?, ?, ?)
+                """, id, createdAt, createdAt, title, UUID.randomUUID(), threshold, enabled, deleted,
+                stockMode, specEnabled);
+    }
+
+    private UUID insertSpec(UUID productId, String name, boolean visible, int deleted) {
+        UUID id = UUID.randomUUID();
+        LocalDateTime now = LocalDateTime.now(CLOCK);
+        jdbcTemplate.update("""
+                INSERT INTO product_specs(id, created_at, updated_at, product_id, name, cost_price, retail_price,
+                                          is_visible, sort_order, is_deleted)
+                VALUES (?, ?, ?, ?, ?, 1.00, 10.00, ?, 0, ?)
+                """, id, now, now, productId, name, visible, deleted);
+        return id;
     }
 
     private void insertCard(UUID productId, String content, String status, LocalDateTime createdAt) {
+        insertCard(productId, content, status, createdAt, null);
+    }
+
+    private void insertCard(UUID productId, String content, String status, LocalDateTime createdAt, UUID specId) {
         jdbcTemplate.update("""
-                INSERT INTO card_keys(id, created_at, updated_at, product_id, content_parts,
+                INSERT INTO card_keys(id, created_at, updated_at, product_id, spec_id, content_parts,
                                       content_fingerprint, status)
-                VALUES (?, ?, ?, ?, jsonb_build_array(?), ?, ?)
-                """, UUID.randomUUID(), createdAt, createdAt, productId, content,
+                VALUES (?, ?, ?, ?, ?, jsonb_build_array(?), ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, productId, specId, content,
                 CardContentParser.fingerprint(List.of(content)), status);
     }
 

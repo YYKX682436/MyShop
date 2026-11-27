@@ -42,6 +42,34 @@ test("null change percentages display an em dash instead of a fabricated rate", 
   assert.equal(formatChangePct(-4.2), "-4.2%")
 })
 
+test("dashboard attention counts inventory warning rows, including separate specs", () => {
+  const messages = {
+    paidWaitingDelivery: (count) => `${count} paid`,
+    lowStock: (count) => `${count} inventory warnings`,
+    zeroStock: (count) => `${count} actually out of stock`,
+    paymentSuccessRate: (rate) => `${rate} payment`,
+    monitorUnavailable: () => "monitor unavailable",
+    resource: (resource, usage) => `${resource} ${usage}`,
+    serviceUnavailable: (service) => `${service} down`,
+    serviceUnknown: (service) => `${service} unknown`,
+  }
+  const stats = {
+    paid_waiting_delivery: 0,
+    low_stock_products: [
+      { product_id: "multi", spec_id: "month", available_stock: 0 },
+      { product_id: "multi", spec_id: "year", available_stock: 0 },
+      { product_id: "one", spec_id: null, available_stock: 5 },
+    ],
+    zero_stock_products: 2,
+    today_payment_success_sample_count: 0,
+  }
+
+  assert.deepEqual(buildDashboardAttention(stats, null, messages).map(item => item.message), [
+    "3 inventory warnings",
+    "2 actually out of stock",
+  ])
+})
+
 test("attention items merge by id and sort critical before warning", () => {
   const items = mergeAndSortAttention([
     { id: "stock", severity: "warning", message: "stock" },

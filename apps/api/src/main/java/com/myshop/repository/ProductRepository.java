@@ -75,38 +75,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
 
     long countByCategoryIdAndIsDeleted(UUID categoryId, int isDeleted);
 
-    /** One grouped read supplies every active product's mode-specific available stock. */
-    @Query(value = """
-            SELECT p.id,
-                   p.title,
-                   p.low_stock_threshold,
-                   CASE
-                       WHEN p.stock_mode = 'UNLIMITED' THEN NULL
-                       WHEN p.stock_mode = 'SUPPLIER' THEN 0
-                       WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
-                       ELSE COALESCE(cs.available_stock, 0)
-                   END AS available_stock
-            FROM products p
-            LEFT JOIN (
-                SELECT product_id,
-                       COUNT(*) FILTER (WHERE status = 'AVAILABLE') AS available_stock
-                FROM card_keys
-                GROUP BY product_id
-            ) cs ON cs.product_id = p.id
-            LEFT JOIN (
-                SELECT product_id, SUM(available_quantity) AS available_stock
-                FROM manual_stocks
-                GROUP BY product_id
-            ) ms ON ms.product_id = p.id
-            WHERE p.is_deleted = 0
-              AND p.is_enabled = true
-            ORDER BY CASE
-                         WHEN p.stock_mode = 'UNLIMITED' THEN 1
-                         WHEN p.stock_mode = 'SUPPLIER' THEN 0
-                         WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
-                         ELSE COALESCE(cs.available_stock, 0)
-                     END ASC,
-                     p.title ASC
-            """, nativeQuery = true)
-    List<Object[]> findActiveProductStockSummaries();
+    /** Active products whose inventory is checked through ProductInventoryBatchService. */
+    @Query("SELECT p FROM Product p WHERE p.isDeleted = 0 AND p.enabled = true ORDER BY p.title ASC, p.id ASC")
+    List<Product> findActiveProductsForDashboard();
 }

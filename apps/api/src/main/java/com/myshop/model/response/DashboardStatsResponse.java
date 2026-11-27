@@ -40,7 +40,8 @@ public record DashboardStatsResponse(
 ) {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
-    public record LowStockProduct(UUID productId, String title, long availableStock, int threshold) { }
+    public record LowStockProduct(UUID productId, String title, UUID specId, String specName,
+                                  long availableStock, int threshold, String stockStatus) { }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record TopProduct(UUID productId, String title, long quantity, BigDecimal salesAmount) { }
