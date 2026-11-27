@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 die() { printf '[myshop-manifest-fetch] ERROR: %s\n' "$*" >&2; exit 1; }
-(( $# == 2 )) || die 'usage: fetch-release-manifest.sh <source_sha> <output-path>'
+(( $# == 2 || $# == 3 )) || die 'usage: fetch-release-manifest.sh <source_sha> <output-path> [run-id]'
 source_sha=$1
 output=$2
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || die 'source SHA must be exactly 40 lowercase hexadecimal characters'
@@ -12,7 +12,7 @@ command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 registry=ghcr.io/yykx682436
-exec python3 - "$script_dir" "$registry" "$source_sha" "$output" <<'PY'
+exec python3 - "$script_dir" "$registry" "$source_sha" "$output" "${3:-}" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-script_dir, registry, source_sha, output_text = sys.argv[1:]
+script_dir, registry, source_sha, output_text, requested_run = sys.argv[1:]
 repo = "YYKX682436/MyShop"
 sha_re = re.compile(r"^[0-9a-f]{40}$")
 if not sha_re.fullmatch(source_sha):
@@ -35,10 +35,13 @@ def gh_json(*args: str) -> dict:
     return json.loads(subprocess.check_output(["gh", "api", *args], text=True, timeout=60))
 
 
+if requested_run and not requested_run.isdigit():
+    raise SystemExit("[myshop-manifest-fetch] run ID is invalid")
 runs = gh_json(f"repos/{repo}/actions/workflows/cicd.yml/runs?head_sha={source_sha}&status=success&per_page=100")
 selected = None
 for run in runs.get("workflow_runs", []):
-    if run.get("head_sha") != source_sha or run.get("conclusion") != "success":
+    if (run.get("head_sha") != source_sha or run.get("conclusion") != "success"
+            or (requested_run and str(run.get("id")) != requested_run)):
         continue
     jobs = gh_json(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
     if any(job.get("name") == "Publish immutable release manifest" and job.get("conclusion") == "success"

@@ -212,11 +212,21 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
                 "archive_tag": archive_ref("api"),
                 "rootfs_diff_ids": CONFIGS["api"]["rootfs"]["diff_ids"]}
     (partial_dir / "api.record.json").write_text(json.dumps(transfer), encoding="utf-8")
+    trusted_path = root / "trusted-api.record.json"
+    trusted_path.write_text(json.dumps(transfer), encoding="utf-8")
+    trusted_path.chmod(0o600)
     partial_bundle = root / "partial-bundle.json"
     created_partial = run(sys.executable, str(ROOT / "scripts/create-offline-image-bundle.py"),
                           str(partial_release_path), str(partial_dir), str(partial_bundle), str(accepted_path),
                           env=local_env)
     assert created_partial.returncode == 0, created_partial.stderr
+    staged_record = json.loads((partial_dir / "api.record.json").read_text())
+    staged_record["tar_sha256"] = "0" * 64
+    (partial_dir / "api.record.json").write_text(json.dumps(staged_record), encoding="utf-8")
+    forged = run(sys.executable, str(ROOT / "scripts/create-offline-image-bundle.py"),
+                 str(partial_release_path), str(partial_dir), str(partial_bundle), str(accepted_path), env=local_env)
+    assert forged.returncode != 0 and "differs from independent CI artifact" in forged.stderr
+    (partial_dir / "api.record.json").write_text(json.dumps(transfer), encoding="utf-8")
     partial_data = json.loads(partial_bundle.read_text())
     assert partial_data["version"] == 5 and partial_data["images"]["web"]["reuse_accepted"] is True
     assert partial_data["images"]["api"]["reuse_accepted"] is False

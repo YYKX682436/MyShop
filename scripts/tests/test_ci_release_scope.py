@@ -29,6 +29,18 @@ class ReleaseScopeTests(unittest.TestCase):
         web = scope.classify(["apps/web/app/payment/page.tsx"])
         self.assertTrue(web["web_full_test"] and web["web_test"])
 
+    def test_neutral_paths_are_escalated_when_changed_code_touches_core_operations(self):
+        paths = ["apps/web/lib/client.ts", "apps/api/src/main/java/com/myshop/Coordinator.java"]
+        result = scope.classify(paths)
+        scope.apply_content_risk(result, paths, "diff --git x y\n+ await updateBalance(account)\n")
+        self.assertTrue(result["api_full_test"] and result["web_full_test"])
+
+    def test_web_package_and_build_configuration_require_full_web_checks(self):
+        for filename in ("package.json", "next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"):
+            with self.subTest(filename=filename):
+                result = scope.classify(["apps/web/" + filename])
+                self.assertTrue(result["web_test"] and result["web_full_test"] and result["web_image"])
+
     def test_targeted_api_selection_never_silently_skips_tests(self):
         with mock.patch.object(scope.Path, "is_dir", return_value=False):
             self.assertEqual(scope.targeted_api_tests(["apps/api/src/main/java/com/myshop/Foo.java"]), "")
@@ -91,6 +103,14 @@ class ReleaseScopeTests(unittest.TestCase):
                 scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
         with self.assertRaisesRegex(SystemExit, "fresh workflow dispatch"):
             scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main", attempt="2")
+        failed = {"workflow_runs": [{"head_sha": sha, "id": 2, "conclusion": "failure"}]}
+        push = {"jobs": [{"steps": [{"name": "Push API image and verify registry digest", "conclusion": "success"}]}]}
+        with mock.patch.object(scope, "command", side_effect=[
+            json.dumps({"object": {"sha": sha}}), json.dumps({"workflow_runs": []}),
+            json.dumps(failed), json.dumps(push),
+        ]):
+            with self.assertRaisesRegex(SystemExit, "publication was attempted"):
+                scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
 
     def test_only_successful_manifest_release_is_a_baseline(self):
         sha = "b" * 40

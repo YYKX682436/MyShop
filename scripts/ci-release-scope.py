@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import re
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -14,6 +16,12 @@ RELEASE_JOB = "Publish immutable release manifest"
 WEB_ROOT_FILES = {
     "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "Dockerfile.web",
     "tsconfig.json", "eslint.config.mjs", ".npmrc",
+}
+WEB_HIGH_IMPACT = {
+    "apps/web/package.json", "apps/web/next.config.js", "apps/web/next.config.mjs",
+    "apps/web/next.config.ts", "apps/web/tsconfig.json", "apps/web/eslint.config.mjs",
+    "apps/web/postcss.config.js", "apps/web/postcss.config.mjs", "apps/web/tailwind.config.js",
+    "apps/web/tailwind.config.ts", "apps/web/instrumentation.ts", "apps/web/middleware.ts",
 }
 DOCUMENT_FILES = {"README.md", "README.en.md", "AGENTS.md", "LICENSE", "THIRD_PARTY_NOTICES.md"}
 DEPLOYMENT_SCRIPTS = {
@@ -30,6 +38,7 @@ SCOPE_KEYS = ("api_test", "web_test", "compose_test", "api_image", "web_image", 
               "api_full_test", "web_full_test")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 CORE_PATH = re.compile(r"payment|balance|order|deliver|inventory|stock|licen[sc]|authoriz|auth/|concurr|transaction|refund", re.I)
+CORE_CONTENT = re.compile(r"payment|balance|order|deliver|inventory|stock|licen[sc]|authoriz|authenticat|jwt|concurr|transaction|refund", re.I)
 WEB_STATIC = (".css", ".scss", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2")
 
 
@@ -70,6 +79,9 @@ def classify(paths: list[str]) -> dict[str, bool]:
             scope["api_full_test"] = True
             continue
 
+        if path in WEB_HIGH_IMPACT or (path.startswith('apps/web/') and basename.startswith('next.config.')):
+            scope["web_image"] = scope["web_test"] = scope["web_full_test"] = scope["runtime"] = True
+            continue
         if path.startswith("apps/web/"):
             scope["web_image"] = scope["runtime"] = True
             if not path.endswith(WEB_STATIC):
@@ -96,6 +108,18 @@ def classify(paths: list[str]) -> dict[str, bool]:
 
         return all_scopes()
     return scope
+
+
+def apply_content_risk(scope: dict[str, bool], paths: list[str], diff: str) -> None:
+    """Escalate when changed code names a core operation in an otherwise neutral path."""
+    if not any(CORE_CONTENT.search(line[1:]) for line in diff.splitlines()
+               if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))):
+        return
+    if any(path.startswith('apps/api/src/') for path in paths):
+        scope['api_test'] = scope['api_full_test'] = True
+        scope['web_test'] = scope['web_full_test'] = True
+    if any(path.startswith('apps/web/') and not path.endswith(WEB_STATIC) for path in paths):
+        scope['web_test'] = scope['web_full_test'] = True
 
 
 def targeted_api_tests(paths: list[str]) -> str:
@@ -171,6 +195,21 @@ def successful_release_for_sha(repository: str, source_sha: str, current_run: st
     return None
 
 
+def published_attempt_for_sha(repository: str, source_sha: str, current_run: str) -> int | None:
+    endpoint = f"repos/{repository}/actions/workflows/cicd.yml/runs?head_sha={source_sha}&per_page=100"
+    runs = json.loads(command("gh", "api", endpoint))["workflow_runs"]
+    for run in runs:
+        run_id = run.get("id")
+        if not run_id or str(run_id) == current_run or run.get("head_sha") != source_sha:
+            continue
+        jobs = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"))["jobs"]
+        for job in jobs:
+            if any(step.get("name") in {"Push API image and verify registry digest", "Push Web image and verify registry digest"}
+                   and step.get("conclusion") not in (None, "", "skipped") for step in job.get("steps", [])):
+                return int(run_id)
+    return None
+
+
 def validate_manual_release(repository: str, source_sha: str, current_run: str, ref: str, attempt: str = "1") -> None:
     if attempt != "1":
         raise SystemExit("Refusing a workflow re-run; use a fresh workflow dispatch")
@@ -183,6 +222,28 @@ def validate_manual_release(repository: str, source_sha: str, current_run: str, 
     previous_run = successful_release_for_sha(repository, source_sha, current_run)
     if previous_run is not None:
         raise SystemExit(f"Release already succeeded for SHA {source_sha} in workflow run {previous_run}")
+    attempted_run = published_attempt_for_sha(repository, source_sha, current_run)
+    if attempted_run is not None:
+        raise SystemExit(f"Image publication was attempted for SHA {source_sha} in run {attempted_run}; use a new reviewed commit")
+
+
+def validated_accepted_manifest(content: str, accepted_sha: str) -> str:
+    """Use the independently supplied production manifest, never an expired CI artifact."""
+    if not content:
+        return ""
+    with tempfile.TemporaryDirectory(prefix="myshop-baseline-") as name:
+        path = Path(name) / "manifest.json"
+        path.write_text(content, encoding="utf-8")
+        script_dir = Path(__file__).resolve().parent
+        result = subprocess.run([sys.executable, str(script_dir / "validate-release-manifest.py"),
+                                 str(path), "ghcr.io/yykx682436", "myshop"],
+                                check=True, text=True, capture_output=True, timeout=30)
+        manifest = json.loads(result.stdout)
+        if manifest["source_sha"] != accepted_sha:
+            raise ValueError("accepted manifest SHA differs from production state")
+        subprocess.run([sys.executable, str(script_dir / "validate-release-ancestry.py"),
+                        str(path), accepted_sha], check=True, text=True, capture_output=True, timeout=30)
+        return json.dumps(manifest, sort_keys=True, separators=(",", ":"))
 
 
 def main() -> None:
@@ -190,6 +251,7 @@ def main() -> None:
     baseline = "none; running all checks and building both images"
     baseline_sha = ""
     baseline_run_id = ""
+    baseline_content = ""
     api_filter = ""
     sha = os.environ["GITHUB_SHA"]
     repository = os.environ["GITHUB_REPOSITORY"]
@@ -204,15 +266,17 @@ def main() -> None:
         if subprocess.run(["git", "merge-base", "--is-ancestor", accepted_sha, sha],
                           timeout=10).returncode:
             raise SystemExit("production accepted SHA is not an ancestor of this release")
-        run_id = successful_release_for_sha(repository, accepted_sha, os.environ["GITHUB_RUN_ID"])
-        if run_id:
+        baseline_content = validated_accepted_manifest(os.environ.get("MYSHOP_ACCEPTED_MANIFEST", ""), accepted_sha)
+        if baseline_content:
             baseline_sha = accepted_sha
-            baseline_run_id = str(run_id)
             raw = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", baseline_sha, sha],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).stdout
             paths = [path.decode("utf-8") for path in raw.split(b"\0") if path]
             scope = classify(paths)
-            baseline = f"{baseline_sha} (production accepted; CI run {run_id})"
+            diff = subprocess.run(["git", "diff", "--no-ext-diff", "--unified=0", baseline_sha, sha, "--", "apps/api/src", "apps/web"],
+                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30).stdout
+            apply_content_risk(scope, paths, diff)
+            baseline = f"{baseline_sha} (validated production manifest)"
             if scope["api_test"] and not scope["api_full_test"]:
                 api_filter = targeted_api_tests(paths)
                 if not api_filter:
@@ -223,10 +287,14 @@ def main() -> None:
             api_filter = ""
     except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         print(f"CI scope fallback: {type(exc).__name__}: {exc}", file=sys.stderr)
+        scope = all_scopes()
+        baseline = "unavailable or invalid; running all checks and building both images"
+        baseline_sha = baseline_run_id = baseline_content = api_filter = ""
 
     result = "".join(f"{key}={str(value).lower()}\n" for key, value in scope.items())
     result += f"api_test_filter={api_filter}\n"
     result += f"baseline_sha={baseline_sha}\nbaseline_run_id={baseline_run_id}\n"
+    result += f"baseline_manifest_b64={base64.b64encode(baseline_content.encode()).decode()}\n"
     print(f"validated baseline: {baseline}\n{result}", end="")
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:

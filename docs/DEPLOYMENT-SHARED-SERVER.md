@@ -209,7 +209,21 @@ The runner-to-server path is disabled by default because its November 27, 2026
 probe transferred only 3.4 MiB of a 32 MiB file before the 240-second bound.
 If that route is separately enabled and succeeds, the entry skips that
 component's Artifact download. Failed transfers leave the accepted release and
-candidate staging intact for resumption.
+candidate staging intact for resumption. Re-running the same entry automatically
+reuses a running or successful CI for the exact SHA, its checksummed manifest,
+and independently retrieved CI transfer records. Verified local archives and
+server partials remain until the release finishes. A release committed before a
+basis or environment update resumes those final steps without redeploying.
+If required evidence has expired and no verified copy remains, or production's
+accepted baseline has changed, the entry stops with an explanation; a new
+reviewed commit is needed instead of republishing the same image tag.
+
+The entry stages an explicit list of runtime helpers, Compose and Caddy files
+from the candidate commit. A server release lock prevents concurrent entries;
+the existing deployment lock covers installation, import, transaction and basis
+updates. API/Web and Caddy changes follow the deployment transaction. Changes
+to the database or node-exporter Compose service stop before mutation and need
+a dedicated infrastructure transaction.
 
 For an explicitly chosen emergency release, dispatch **MyShop emergency offline export** on
 `main` with the full SHA of an already successful CI release. It pulls only the

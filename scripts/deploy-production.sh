@@ -110,6 +110,7 @@ state_existed=0
 candidate_started=0
 api_candidate_started=0
 web_candidate_started=0
+caddy_candidate_started=0
 api_stop_attempted=0
 committed=0
 shared_bootstrap=0
@@ -119,7 +120,12 @@ cleanup_tmp() {
   rm -rf -- "$tmp_dir"
 }
 trap cleanup_tmp EXIT
-exec 9>"$HOST_LOCK"
+if [[ "${MYSHOP_INHERITED_DEPLOY_LOCK:-0}" == 1 ]]; then
+  [[ "$(readlink /proc/$$/fd/9 2>/dev/null || true)" == "$HOST_LOCK" ]] \
+    || die 'inherited deployment lock descriptor does not match the configured lock'
+else
+  exec 9>"$HOST_LOCK"
+fi
 flock -n 9 || die 'another deployment or storage lifecycle operation is active'
 if [[ -f "$STATE_FILE" ]]; then
   cp -p -- "$STATE_FILE" "$state_backup"
@@ -452,6 +458,16 @@ service_config_matches_running() {
 if (( ! shared_bootstrap )); then
   if ! service_config_matches_running api; then api_changed=1; fi
   if ! service_config_matches_running web; then web_changed=1; fi
+fi
+caddy_changed=0
+if (( ! shared_bootstrap )) && [[ "${MYSHOP_CHECK_CADDY_CONFIG:-0}" == 1 ]]; then
+  for service in db node-exporter; do
+    service_config_matches_running "$service" \
+      || die "$service Compose configuration changed; it needs a dedicated infrastructure transaction"
+  done
+  if [[ "${MYSHOP_CADDY_CONFIG_CHANGED:-0}" == 1 ]] || ! service_config_matches_running caddy; then
+    caddy_changed=1
+  fi
 fi
 if (( database_migration && api_digest_changed == 0 )); then
   die 'manifest declares a database migration without changing the API image digest'
@@ -788,6 +804,10 @@ PY
 restore_old() {
   local current_schema
   rollback_state || return 1
+  if [[ -n "${MYSHOP_PREVIOUS_CONFIG_DIR:-}" ]]; then
+    install -o root -g root -m 0644 "$MYSHOP_PREVIOUS_CONFIG_DIR/docker-compose.shared-server.yml" "$COMPOSE_FILE" || return 1
+    install -o root -g root -m 0644 "$MYSHOP_PREVIOUS_CONFIG_DIR/Caddyfile.shared-server" "$PROJECT_ROOT/Caddyfile.shared-server" || return 1
+  fi
   if (( forward_recovery )); then
     # The accepted older API was never validated against this migrated schema.
     # A failed forward recovery must leave all app-facing services stopped.
@@ -828,6 +848,9 @@ restore_old() {
     if (( web_changed && web_candidate_started )); then
       run_before_compose config --quiet || return 1
       run_before_compose up -d --pull never --no-deps web || return 1
+    fi
+    if (( caddy_candidate_started )); then
+      run_before_compose up -d --pull never --no-deps --force-recreate caddy || return 1
     fi
   fi
   wait_health "$COMPOSE_PROJECT" || return 1
@@ -939,7 +962,13 @@ else
     run_compose up -d --pull never --no-deps web || pre_commit_fail start
     wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
   fi
-  if (( ! api_changed && ! web_changed )); then
+  if (( caddy_changed )); then
+    candidate_started=1
+    caddy_candidate_started=1
+    run_compose up -d --pull never --no-deps --force-recreate caddy || pre_commit_fail start
+    wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
+  fi
+  if (( ! api_changed && ! web_changed && ! caddy_changed )); then
     wait_health "$COMPOSE_PROJECT" || pre_commit_fail health
   fi
 fi

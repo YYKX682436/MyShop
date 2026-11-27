@@ -30,4 +30,5 @@
 - Runner 直传当前实测不可靠，默认关闭；入口自动下载未直传成功的组件 Artifact，经 Mac RSYNC 传输。生产不依赖 GHCR 直拉，不在 Mac 构建生产镜像。
 - 正常传输使用 `MYSHOP_OFFLINE_IMAGES=1` 调用既有部署事务和经过校验的局部 bundle；接受后私有环境恢复 `MYSHOP_OFFLINE_IMAGES=0`，保持历史回滚与已有镜像。GHCR 和 `export-offline-release.yml` 仍可作为额外应急渠道。
 - 纯文档改动不触发发布；不因最近一次 CI 成功但未部署而遗漏组件，以生产 accepted SHA 为差异基准。
+- 发布中断后重新运行同一入口：优先复用同一 SHA 的成功或正在运行的 CI、可信组件记录和已有传输数据；已 accepted 的版本只恢复未完成的收尾。证据过期且无可信副本或 accepted 基准变化时停止，不能覆盖同一 SHA 的镜像。
 - `Dockerfile.api` 和 `Dockerfile.web` 的基础镜像按 digest 固定；定期在明确的依赖升级任务中验证并更新。

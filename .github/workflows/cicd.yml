@@ -7,6 +7,10 @@ on:
         description: Production accepted full Git SHA, read immediately before dispatch
         required: true
         type: string
+      accepted_manifest:
+        description: Validated production accepted manifest, or empty for a full build
+        required: false
+        type: string
 
 concurrency:
   group: myshop-manual-release
@@ -40,6 +44,7 @@ jobs:
       migration: ${{ steps.changes.outputs.migration }}
       baseline_sha: ${{ steps.changes.outputs.baseline_sha }}
       baseline_run_id: ${{ steps.changes.outputs.baseline_run_id }}
+      baseline_manifest_b64: ${{ steps.changes.outputs.baseline_manifest_b64 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,6 +54,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MYSHOP_ACCEPTED_SHA: ${{ inputs.accepted_sha }}
+          MYSHOP_ACCEPTED_MANIFEST: ${{ inputs.accepted_manifest }}
         run: python3 scripts/ci-release-scope.py
 
   api:
@@ -233,6 +239,13 @@ jobs:
           mkdir -p "$archive"
           docker save --output "$archive/api.tar" "$MYSHOP_REGISTRY/myshop-api:$GITHUB_SHA"
           python3 scripts/create-transfer-record.py api "$GITHUB_SHA" "$IMAGE_DIGEST" "$archive/api.tar" "$archive/api.record.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        with:
+          name: myshop-transfer-record-api-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-transfer-api-${{ github.sha }}/api.record.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Try bounded direct API transfer when enabled
         id: api-direct
         if: ${{ needs.scope.outputs.api_image == 'true' && vars.MYSHOP_RUNNER_DIRECT_ENABLED == 'true' }}
@@ -351,6 +364,13 @@ jobs:
           mkdir -p "$archive"
           docker save --output "$archive/web.tar" "$MYSHOP_REGISTRY/myshop-web:$GITHUB_SHA"
           python3 scripts/create-transfer-record.py web "$GITHUB_SHA" "$IMAGE_DIGEST" "$archive/web.tar" "$archive/web.record.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        with:
+          name: myshop-transfer-record-web-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-transfer-web-${{ github.sha }}/web.record.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Try bounded direct Web transfer when enabled
         id: web-direct
         if: ${{ needs.scope.outputs.web_image == 'true' && vars.MYSHOP_RUNNER_DIRECT_ENABLED == 'true' }}
@@ -416,12 +436,13 @@ jobs:
             printf 'Refusing stale release SHA %s; main is now %s\n' "$GITHUB_SHA" "$main_sha" >&2
             exit 1
           }
-      - name: Fetch the previous validated full-service manifest
+      - name: Restore the validated production accepted manifest
         if: ${{ needs.scope.outputs.baseline_sha != '' }}
         env:
-          BASELINE_SHA: ${{ needs.scope.outputs.baseline_sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/fetch-release-manifest.sh "$BASELINE_SHA" "$RUNNER_TEMP/base-release-manifest.json"
+          BASELINE_MANIFEST: ${{ needs.scope.outputs.baseline_manifest_b64 }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$BASELINE_MANIFEST" | base64 --decode > "$RUNNER_TEMP/base-release-manifest.json"
       - name: Compose the complete current release manifest
         env:
           SOURCE_SHA: ${{ github.sha }}

@@ -162,6 +162,14 @@ for service in APP_SERVICES:
         if record_path.is_symlink() or not record_path.is_file():
             fail(f"{service} CI transfer record is missing or unsafe")
         transfer = json.loads(record_path.read_text(encoding="utf-8"))
+        trusted_path = output_path.parent / f"trusted-{service}.record.json"
+        if trusted_path.is_symlink() or not trusted_path.is_file():
+            fail(f"{service} independent CI transfer record is missing or unsafe")
+        trusted_info = trusted_path.stat()
+        if os.geteuid() == 0 and (trusted_info.st_uid != 0 or trusted_info.st_mode & 0o077):
+            fail(f"{service} independent CI transfer record must be root-owned and private")
+        if json.loads(trusted_path.read_text(encoding="utf-8")) != transfer:
+            fail(f"{service} staging record differs from independent CI artifact")
         if not isinstance(transfer, dict) or not DIGEST.fullmatch(str(transfer.get("image_id", ""))):
             fail(f"{service} CI image ID is invalid")
         if {key: value for key, value in transfer.items() if key != "image_id"} != {

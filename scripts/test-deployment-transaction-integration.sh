@@ -382,6 +382,9 @@ case "${1:-}" in
       '{{index .Config.Labels "com.docker.compose.config-hash"}}')
         if [[ "$service" == api ]]; then printf '%s\n' "$(printf 'a%.0s' {1..64})"
         elif [[ "$service" == web ]]; then printf '%s\n' "$(printf 'b%.0s' {1..64})"
+        elif [[ "$service" == db ]]; then printf '%s\n' "$(printf 'c%.0s' {1..64})"
+        elif [[ "$service" == node-exporter ]]; then printf '%s\n' "$(printf 'e%.0s' {1..64})"
+        elif [[ "$service" == caddy ]]; then printf '%s\n' "$(printf 'f%.0s' {1..64})"
         else exit 1; fi
         ;;
       '{{.Image}}')
@@ -486,7 +489,14 @@ if [[ "$action" == config && " $* " == *" --hash "* ]]; then
   selected=0
   if [[ "$service" == api && ( "$candidate_api" == 1 || "${FAKE_CONFIG_API_CHANGED:-0}" == 1 ) ]]; then selected=1; fi
   if [[ "$service" == web && ( "$candidate_web" == 1 || "${FAKE_CONFIG_WEB_CHANGED:-0}" == 1 ) ]]; then selected=1; fi
-  if [[ "$service" == api ]]; then base_hash=$(printf 'a%.0s' {1..64}); else base_hash=$(printf 'b%.0s' {1..64}); fi
+  if [[ "$service" == db && "${FAKE_CONFIG_DB_CHANGED:-0}" == 1 ]]; then selected=1; fi
+  case "$service" in
+    api) base_hash=$(printf 'a%.0s' {1..64}) ;;
+    web) base_hash=$(printf 'b%.0s' {1..64}) ;;
+    db) base_hash=$(printf 'c%.0s' {1..64}) ;;
+    node-exporter) base_hash=$(printf 'e%.0s' {1..64}) ;;
+    caddy) base_hash=$(printf 'f%.0s' {1..64}) ;;
+  esac
   if (( selected )); then config_hash=$(printf 'd%.0s' {1..64}); else config_hash=$base_hash; fi
   printf '%s %s\n' "$service" "$config_hash"
   exit 0
@@ -513,7 +523,7 @@ case "$action" in
     [[ ! ( "$candidate" == 0 && "${DEPLOY_TEST_FAIL:-}" == rollback-start ) ]] || exit 1
     targets=()
     for arg in "$@"; do [[ "$arg" != api && "$arg" != web ]] || targets+=("$arg"); done
-    if (( ${#targets[@]} == 0 )) && [[ "$action" == up ]]; then targets=(api web); fi
+    if (( ${#targets[@]} == 0 )) && [[ "$action" == up && " $* " != *" caddy "* ]]; then targets=(api web); fi
     for service in "${targets[@]}"; do
       if [[ "$service" == api ]]; then selected=$candidate_api; else selected=$candidate_web; fi
       if (( selected )); then printf 'candidate\n' >"$root/$service-stage"; else printf 'old\n' >"$root/$service-stage"; fi
@@ -1057,6 +1067,28 @@ if output=$(run_deploy 2>&1); then update_status=0; else update_status=$?; fi
 [[ ! -s "$case_root/pull.log" && ! -s "$case_root/backup.log" && ! -s "$case_root/schema.log" ]] || fail 'unchanged-digest release pulled images or touched database state'
 ! grep -E '^(up|stop)$' "$case_root/compose.log" | grep -q . || fail 'unchanged digests caused an app service restart'
 pass 'unchanged digests do not pull images, back up the database, or recreate containers'
+
+reset_case
+if output=$(MYSHOP_CHECK_CADDY_CONFIG=1 MYSHOP_CADDY_CONFIG_CHANGED=1 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'Caddy configuration update failed'; }
+[[ "$(grep -c '^up|' "$case_root/compose-detail.log")" == 1 ]] || fail 'Caddy configuration update restarted extra services'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--force-recreate caddy' || fail 'Caddy configuration update did not recreate Caddy'
+[[ "$(<"$case_root/api-stage")" == old && "$(<"$case_root/web-stage")" == old ]] || fail 'Caddy configuration update restarted an app'
+pass 'Caddy configuration update restarts only Caddy'
+
+reset_case
+if output=$(MYSHOP_CHECK_CADDY_CONFIG=1 MYSHOP_CADDY_CONFIG_CHANGED=1 DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status != 0 )) || fail 'failed Caddy update was accepted'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'failed Caddy update changed accepted state'
+[[ "$(grep -c -- '--force-recreate caddy' "$case_root/compose-detail.log")" == 2 ]] || fail 'failed Caddy update did not restore Caddy'
+pass 'failed Caddy configuration update restores the prior service and accepted state'
+
+reset_case
+if output=$(MYSHOP_CHECK_CADDY_CONFIG=1 FAKE_CONFIG_DB_CHANGED=1 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status != 0 )) || fail 'database Compose change bypassed the infrastructure transaction gate'
+[[ ! -s "$case_root/pull.log" ]] || fail 'database Compose change reached image pull'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'database Compose change modified accepted state'
+pass 'database Compose changes stop before mutation for a dedicated transaction'
 
 manifest="$tmp_dir/api-config-only-manifest.json"
 write_scope_manifest noop "$manifest"
