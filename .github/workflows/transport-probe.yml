@@ -1,0 +1,65 @@
+name: MyShop transport probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    environment: production-upload
+    timeout-minutes: 15
+    steps:
+      - name: Verify restricted Runner-to-host rsync transport
+        env:
+          UPLOAD_KEY: ${{ secrets.MYSHOP_UPLOAD_SSH_KEY }}
+          UPLOAD_KNOWN_HOSTS: ${{ secrets.MYSHOP_UPLOAD_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "$RUNNER_TEMP/myshop-ssh"
+          printf '%s\n' "$UPLOAD_KEY" > "$RUNNER_TEMP/myshop-ssh/key"
+          printf '%s\n' "$UPLOAD_KNOWN_HOSTS" > "$RUNNER_TEMP/myshop-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/myshop-ssh/key" "$RUNNER_TEMP/myshop-ssh/known_hosts"
+          export RSYNC_RSH="ssh -p 1429 -i $RUNNER_TEMP/myshop-ssh/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/myshop-ssh/known_hosts -o BatchMode=yes"
+          mkdir -p "$RUNNER_TEMP/probe/v1" "$RUNNER_TEMP/probe/v2"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ['RUNNER_TEMP']) / 'probe'
+          payload = bytearray(bytes(range(256)) * (32 * 1024 * 1024 // 256))
+          (root / 'v1/payload.bin').write_bytes(payload)
+          payload[16 * 1024 * 1024:16 * 1024 * 1024 + 4096] = bytes([73]) * 4096
+          (root / 'v2/payload.bin').write_bytes(payload)
+          PY
+          echo '### First transfer' >> "$GITHUB_STEP_SUMMARY"
+          started=$SECONDS
+          timeout 240s rsync -av --mkpath --partial-dir=.rsync-partial --stats \
+            "$RUNNER_TEMP/probe/v1/payload.bin" myshop-upload@110.42.34.161:/staging/probe-${GITHUB_RUN_ID}-v1/ \
+            | tee "$RUNNER_TEMP/first.stats"
+          printf 'elapsed=%ss\n' "$((SECONDS - started))" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/first.stats" >> "$GITHUB_STEP_SUMMARY"
+          echo '### Different version with copy-dest' >> "$GITHUB_STEP_SUMMARY"
+          started=$SECONDS
+          timeout 240s rsync -av --mkpath --partial-dir=.rsync-partial --copy-dest=/staging/probe-${GITHUB_RUN_ID}-v1 --stats \
+            "$RUNNER_TEMP/probe/v2/payload.bin" myshop-upload@110.42.34.161:/staging/probe-${GITHUB_RUN_ID}-v2/ \
+            | tee "$RUNNER_TEMP/second.stats"
+          printf 'elapsed=%ss\n' "$((SECONDS - started))" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/second.stats" >> "$GITHUB_STEP_SUMMARY"
+          echo '### Interrupted and resumed transfer' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          timeout 4s rsync -av --mkpath --partial-dir=.rsync-partial --bwlimit=256 --stats \
+            "$RUNNER_TEMP/probe/v2/payload.bin" myshop-upload@110.42.34.161:/staging/probe-${GITHUB_RUN_ID}-resume/ \
+            > "$RUNNER_TEMP/interrupted.log" 2>&1
+          interrupted_status=$?
+          set -e
+          printf 'interrupted_status=%s\n' "$interrupted_status" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$interrupted_status" = 124
+          started=$SECONDS
+          timeout 240s rsync -av --mkpath --partial-dir=.rsync-partial --stats \
+            "$RUNNER_TEMP/probe/v2/payload.bin" myshop-upload@110.42.34.161:/staging/probe-${GITHUB_RUN_ID}-resume/ \
+            | tee "$RUNNER_TEMP/resume.stats"
+          printf 'resume_elapsed=%ss\n' "$((SECONDS - started))" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/resume.stats" >> "$GITHUB_STEP_SUMMARY"
