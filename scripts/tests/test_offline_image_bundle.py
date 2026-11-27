@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
         "if image is None: raise SystemExit('missing fake image')\n"
         "if os.environ.get('FAKE_BAD_REF') == ref: image['Config']['Env']=['PATH=/tampered']\n"
         "if os.environ.get('FAKE_MISSING_INFRA_DIGEST') == ref: image['RepoDigests']=[]\n"
-        "print(json.dumps(image))\n", encoding="utf-8")
+        "print(json.dumps(image if '--format' in sys.argv else [image]))\n", encoding="utf-8")
     fake_docker.chmod(0o755)
     local_env = os.environ.copy()
     local_env["PATH"] = str(fake_bin) + os.pathsep + local_env.get("PATH", "")
@@ -183,6 +183,50 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     bad_infra = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
                     str(bundle_path), "--verify-local", env=bad_infra_env)
     assert bad_infra.returncode != 0 and "preinstalled RepoDigest differs" in bad_infra.stderr
+
+    # A new API release carries only api.tar; the accepted Web is verified by
+    # its existing local tag, image ID, config, and rootfs layers.
+    partial_dir = root / "partial-transfer"
+    partial_dir.mkdir()
+    (partial_dir / "api.tar").write_bytes((archive_dir / "api.tar").read_bytes())
+    partial_release = {**release, "version": 3, "accepted_sha": BASE_SHA}
+    partial_release_path = root / "partial-release.json"
+    partial_release_path.write_text(json.dumps(partial_release), encoding="utf-8")
+    accepted_state = {"version": 1, "active": {"source_sha": BASE_SHA, "images": {
+        "api": {"digest": "sha256:" + "0" * 64, "source_sha": BASE_SHA,
+                "ref": f"{REGISTRY}/myshop-api@sha256:{'0' * 64}", "image_id": LOADED_IDS["api"],
+                "runtime_ref": archive_ref("api")},
+        "web": {"digest": DIGESTS["web"], "source_sha": BASE_SHA,
+                "ref": source_ref("web"), "image_id": LOADED_IDS["web"],
+                "runtime_ref": archive_ref("web")},
+    }}}
+    accepted_path = root / "accepted.json"
+    accepted_path.write_text(json.dumps(accepted_state), encoding="utf-8")
+    transfer = {"version": 1, "service": "api", "source_sha": SHA,
+                "registry_digest": DIGESTS["api"], "image_id": CONFIG_IDS["api"],
+                "tar_sha256": hashlib.sha256((partial_dir / "api.tar").read_bytes()).hexdigest(),
+                "archive_tag": archive_ref("api"),
+                "rootfs_diff_ids": CONFIGS["api"]["rootfs"]["diff_ids"]}
+    (partial_dir / "api.record.json").write_text(json.dumps(transfer), encoding="utf-8")
+    partial_bundle = root / "partial-bundle.json"
+    created_partial = run(sys.executable, str(ROOT / "scripts/create-offline-image-bundle.py"),
+                          str(partial_release_path), str(partial_dir), str(partial_bundle), str(accepted_path),
+                          env=local_env)
+    assert created_partial.returncode == 0, created_partial.stderr
+    partial_data = json.loads(partial_bundle.read_text())
+    assert partial_data["version"] == 5 and partial_data["images"]["web"]["reuse_accepted"] is True
+    assert partial_data["images"]["api"]["reuse_accepted"] is False
+    for service in SERVICES:
+        partial_data["images"][service]["loaded_image_id"] = LOADED_IDS[service]
+    partial_bundle.write_text(json.dumps(partial_data), encoding="utf-8")
+    verified_partial = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                           str(partial_bundle), "--manifest", str(partial_release_path),
+                           "--verify-archives", str(partial_dir), "--verify-local", env=local_env)
+    assert verified_partial.returncode == 0, verified_partial.stderr
+    (partial_dir / "web.tar").write_bytes(b"unexpected")
+    rejected_extra = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                         str(partial_bundle), "--verify-archives", str(partial_dir), env=local_env)
+    assert rejected_extra.returncode != 0 and "unexpectedly transferred" in rejected_extra.stderr
 
     tampered_archive = archive_dir / "api.tar"
     tampered_archive.write_bytes(tampered_archive.read_bytes() + b"corrupt")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combine newly built service digests with the last validated CI manifest."""
+"""Combine newly built service digests with the production-accepted manifest."""
 from __future__ import annotations
 
 import json
@@ -28,11 +28,16 @@ def env_bool(name: str) -> bool:
 
 source_sha = os.environ.get("SOURCE_SHA", "")
 baseline_sha = os.environ.get("BASELINE_SHA", "")
+accepted_sha = os.environ.get("ACCEPTED_SHA", "")
 output = Path(os.environ.get("OUTPUT_FILE", ""))
 if not SHA.fullmatch(source_sha):
     fail("SOURCE_SHA must be a full lowercase SHA")
 if baseline_sha and not SHA.fullmatch(baseline_sha):
     fail("BASELINE_SHA must be empty or a full lowercase SHA")
+if not SHA.fullmatch(accepted_sha):
+    fail("ACCEPTED_SHA must be a full lowercase SHA")
+if baseline_sha and baseline_sha != accepted_sha:
+    fail("baseline must equal the observed production accepted SHA")
 if not str(output):
     fail("OUTPUT_FILE is required")
 api_build, web_build = env_bool("API_BUILD"), env_bool("WEB_BUILD")
@@ -48,7 +53,7 @@ if baseline_sha:
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     except Exception as exc:
         fail(f"baseline manifest is invalid JSON: {exc}")
-    if baseline.get("source_sha") != baseline_sha or baseline.get("version") != 2:
+    if baseline.get("source_sha") != baseline_sha or baseline.get("version") not in (2, 3):
         fail("baseline manifest does not match the selected successful CI release")
     if not isinstance(baseline.get("images"), dict) or set(baseline["images"]) != set(SERVICES):
         fail("baseline manifest must describe both API and Web images")
@@ -80,9 +85,10 @@ for service, should_build in (("api", api_build), ("web", web_build)):
 if set(images) != set(SERVICES):
     fail("the release manifest must describe API and Web")
 payload = {
-    "version": 2,
+    "version": 3,
     "project": "myshop",
     "source_sha": source_sha,
+    "accepted_sha": accepted_sha,
     "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "built_services": sorted(service for service, value in (("api", api_build), ("web", web_build)) if value),
     "database_migration": database_migration,

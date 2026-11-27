@@ -95,6 +95,7 @@ approved_registry=${MYSHOP_APPROVED_REGISTRY:-}
 [[ -n "$approved_registry" ]] || die 'MYSHOP_APPROVED_REGISTRY is not configured'
 manifest_json=$(python3 "$SCRIPT_DIR/validate-release-manifest.py" "$manifest" "$approved_registry" myshop) || exit $?
 candidate_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_sha"])')
+manifest_accepted_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("accepted_sha", ""))')
 api_ref=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["ref"])')
 api_digest=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["digest"])')
 api_source_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["source_sha"])')
@@ -216,6 +217,9 @@ if (( state_existed )); then
 fi
 if (( ! shared_bootstrap )); then
   [[ -n "${before_ref[api]:-}" && -n "${before_ref[web]:-}" ]] || die 'accepted baseline image refs are incomplete'
+fi
+if [[ -n "$manifest_accepted_sha" && "$manifest_accepted_sha" != "$active_sha" ]]; then
+  die "release was built against accepted SHA $manifest_accepted_sha, but production accepts $active_sha"
 fi
 
 # Check the accepted version while holding the deployment lock. A delayed

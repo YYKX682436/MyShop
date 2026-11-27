@@ -6,6 +6,13 @@ release manifest. Production runs only from the immutable image manifest
 recorded under `/opt/myshop/runtime`. Production normally never builds
 application images; the one-time initial-release exception is recorded below.
 
+For the current shared MyShop production host, the routine release entry is
+`bash scripts/release-production.sh` from a committed and pushed `main`. See
+[DEPLOYMENT-SHARED-SERVER.md](DEPLOYMENT-SHARED-SERVER.md) for the accepted-SHA
+baseline, per-component Artifact transfer, RSYNC basis, and existing deployment
+transaction. The legacy `/opt/myshop` host layout below is retained as a
+historical runbook for that separate installation.
+
 ## Host layout and immutable Compose
 
 The host framework is `/opt/myshop/runtime`:

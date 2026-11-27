@@ -18,6 +18,21 @@ class ReleaseScopeTests(unittest.TestCase):
         self.assertTrue(result["web_test"] and result["web_image"])
         self.assertFalse(result["api_test"] or result["api_image"] or result["compose_test"])
 
+    def test_static_web_changes_build_without_optional_test_suites(self):
+        result = scope.classify(["apps/web/app/globals.css", "apps/web/public/banner.webp"])
+        self.assertTrue(result["web_image"] and result["runtime"])
+        self.assertFalse(result["web_test"] or result["web_full_test"] or result["api_image"])
+
+    def test_core_changes_keep_full_related_tests(self):
+        api = scope.classify(["apps/api/src/main/java/com/myshop/order/OrderService.java"])
+        self.assertTrue(api["api_full_test"] and api["web_full_test"])
+        web = scope.classify(["apps/web/app/payment/page.tsx"])
+        self.assertTrue(web["web_full_test"] and web["web_test"])
+
+    def test_targeted_api_selection_never_silently_skips_tests(self):
+        with mock.patch.object(scope.Path, "is_dir", return_value=False):
+            self.assertEqual(scope.targeted_api_tests(["apps/api/src/main/java/com/myshop/Foo.java"]), "")
+
     def test_api_changes_run_web_compatibility_without_web_image(self):
         result = scope.classify(["apps/api/src/main/java/com/myshop/PaymentService.java"])
         self.assertTrue(result["api_test"] and result["api_image"] and result["web_test"])

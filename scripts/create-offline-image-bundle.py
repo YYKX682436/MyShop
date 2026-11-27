@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -51,9 +52,10 @@ def canonical_sha256(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
-if len(sys.argv) != 4:
-    raise SystemExit("usage: create-offline-image-bundle.py <release-manifest.json> <archive-directory> <bundle.json>")
-manifest_path, archive_dir, output_path = map(Path, sys.argv[1:])
+if len(sys.argv) not in (4, 5):
+    raise SystemExit("usage: create-offline-image-bundle.py <release-manifest.json> <archive-directory> <bundle.json> [accepted-state.json]")
+manifest_path, archive_dir, output_path = map(Path, sys.argv[1:4])
+accepted_state_path = Path(sys.argv[4]) if len(sys.argv) == 5 else None
 validator = Path(__file__).with_name("validate-release-manifest.py")
 result = __import__("subprocess").run(
     [sys.executable, str(validator), str(manifest_path), REGISTRY, "myshop"],
@@ -67,12 +69,18 @@ if not SHA.fullmatch(sha):
     fail("release manifest source_sha must be a full lowercase SHA")
 archive_dir = archive_dir.resolve(strict=True)
 images: dict[str, dict[str, object]] = {}
+accepted = None
+if accepted_state_path:
+    if manifest.get("version") != 3:
+        fail("transferred release requires a production-baselined manifest")
+    accepted_state = json.loads(accepted_state_path.read_text(encoding="utf-8"))
+    accepted = accepted_state.get("active")
+    if not isinstance(accepted, dict) or accepted.get("source_sha") != manifest["accepted_sha"]:
+        fail("production accepted SHA changed since CI dispatch")
 
 for service in APP_SERVICES:
     archive_name = f"{service}.tar"
     archive_path = archive_dir / archive_name
-    if archive_path.is_symlink() or not archive_path.is_file() or archive_path.resolve(strict=True).parent != archive_dir:
-        fail(f"{service} Docker archive is missing, symlinked, or outside the archive directory")
     release_image = manifest["images"][service]
     source_ref = release_image["ref"]
     source_digest = release_image["digest"]
@@ -80,6 +88,29 @@ for service in APP_SERVICES:
     archive_ref = f"{REGISTRY}/myshop-{service}:{image_source_sha}"
     if not DIGEST.fullmatch(source_digest):
         fail(f"{service} source digest is invalid")
+    previous = accepted["images"][service] if accepted else None
+    if previous and previous["digest"] == source_digest:
+        if archive_path.exists() or (archive_dir / f"{service}.record.json").exists():
+            fail(f"unchanged {service} must not have a transferred archive")
+        if previous.get("source_sha", accepted["source_sha"]) != image_source_sha:
+            fail(f"reused {service} source SHA differs from accepted state")
+        archive_ref = previous.get("runtime_ref", previous["ref"])
+        inspected = json.loads(subprocess.check_output(["docker", "image", "inspect", archive_ref], text=True))[0]
+        image_id = inspected["Id"]
+        if image_id != previous.get("image_id") or inspected["Os"] != "linux" or inspected["Architecture"] != "amd64":
+            fail(f"reused {service} image ID or platform differs from accepted state")
+        if inspected.get("Config", {}).get("Labels", {}).get("org.opencontainers.image.revision") != image_source_sha:
+            fail(f"reused {service} image source label differs from accepted state")
+        images[service] = {
+            "source_ref": source_ref, "source_digest": source_digest, "source_sha": image_source_sha,
+            "archive_ref": archive_ref, "config_digest": image_id,
+            "runtime_config_digest": canonical_sha256(inspected["Config"]),
+            "rootfs_diff_ids": inspected["RootFS"]["Layers"], "loaded_image_id": image_id,
+            "archive": "", "archive_sha256": "", "reuse_accepted": True,
+        }
+        continue
+    if archive_path.is_symlink() or not archive_path.is_file() or archive_path.resolve(strict=True).parent != archive_dir:
+        fail(f"{service} Docker archive is missing, symlinked, or outside the archive directory")
     try:
         with tarfile.open(archive_path, "r:") as tar:
             members = {member.name: member for member in tar.getmembers() if member.isfile()}
@@ -126,6 +157,21 @@ for service in APP_SERVICES:
         "archive": archive_name,
         "archive_sha256": sha256_file(archive_path),
     }
+    if accepted:
+        record_path = archive_dir / f"{service}.record.json"
+        if record_path.is_symlink() or not record_path.is_file():
+            fail(f"{service} CI transfer record is missing or unsafe")
+        transfer = json.loads(record_path.read_text(encoding="utf-8"))
+        if transfer != {
+            "version": 1, "service": service, "source_sha": image_source_sha,
+            "registry_digest": source_digest, "image_id": config_digest,
+            "tar_sha256": image["archive_sha256"], "archive_tag": archive_ref,
+            "rootfs_diff_ids": image["rootfs_diff_ids"],
+        }:
+            fail(f"{service} tar, CI record, or manifest identity differs")
+        if config.get("config", {}).get("Labels", {}).get("org.opencontainers.image.revision") != image_source_sha:
+            fail(f"{service} archive source label differs from the manifest")
+        image["reuse_accepted"] = False
     if not isinstance(image["rootfs_diff_ids"], list) or not image["rootfs_diff_ids"]:
         fail(f"{service} image has no root filesystem layer identities")
     images[service] = image
@@ -144,8 +190,10 @@ for service in INFRA_SERVICES:
         "archive": "",
         "archive_sha256": "",
     }
+    if accepted:
+        images[service]["reuse_accepted"] = False
 
-bundle = {"version": 4, "source_sha": sha, "platform": "linux/amd64", "images": images}
+bundle = {"version": 5 if accepted else 4, "source_sha": sha, "platform": "linux/amd64", "images": images}
 output_path.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=f".{output_path.name}.", dir=output_path.parent)
 try:

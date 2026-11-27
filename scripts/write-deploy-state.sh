@@ -101,7 +101,7 @@ validation = subprocess.run(
 if validation.returncode:
     fail(f"release manifest is invalid: {validation.stderr.strip()}")
 manifest = json.loads(validation.stdout)
-if manifest.get("version") != 2 or manifest.get("project") != "myshop":
+if manifest.get("version") not in (2, 3) or manifest.get("project") != "myshop":
     fail("manifest version/project is not supported")
 candidate_sha = manifest.get("source_sha")
 if not isinstance(candidate_sha, str) or not sha_re.fullmatch(candidate_sha):
@@ -126,7 +126,7 @@ if offline_mode == "1":
         bundle = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
     except Exception as exc:
         fail(f"offline image bundle is invalid: {exc}")
-    if bundle.get("version") != 4 or bundle.get("source_sha") != candidate_sha:
+    if bundle.get("version") not in (4, 5) or bundle.get("source_sha") != candidate_sha:
         fail("offline image bundle does not match candidate source SHA")
     bundle_images = bundle.get("images")
     if not isinstance(bundle_images, dict) or set(bundle_images) != bundle_services:
@@ -137,7 +137,8 @@ if offline_mode == "1":
         if (item.get("source_ref") != target["ref"] or item.get("source_digest") != target["digest"]
                 or item.get("source_sha") != target["source_sha"]):
             fail(f"offline image bundle {service} identity differs from release manifest")
-        runtime_refs[service] = item.get("archive_ref", "")
+        runtime_refs[service] = (runtime_refs[service] if item.get("reuse_accepted") is True
+                                 else item.get("archive_ref", ""))
         image_ids[service] = item.get("loaded_image_id", "")
 
 candidate = {

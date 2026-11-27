@@ -18,28 +18,24 @@ the stack, restore a database from another host, or change DNS or TLS.
 
 ## Routine production upgrade
 
-1. Ordinary pushes do not start a release. Dispatch **MyShop CI** manually on
-   the current `main` SHA. It refuses stale SHAs, repeated successful SHAs, and
-   reruns, and serializes releases. It compares the commit with the most recent
-   successful ancestor. If that baseline is missing or untrusted, all checks
-   run and both images build. API changes run API/PostgreSQL and Web compatibility
-   checks but rebuild only API. Web changes build only Web. Database resources
-   also run deployment/schema contract tests. Documentation-only changes do not
-   publish images. A successful release publishes a small full-service manifest;
-   routine publishing does not create Docker archives.
-2. Fetch the manifest with `scripts/fetch-release-manifest.sh <full-sha>
-   <private-path>`. Confirm the SHA and accepted state. Install the matching
-   production scripts and Compose file from the same `main` commit, then run the
-   read-only upgrade preflight on the host. Never use first-install mode for an
-   upgrade.
-3. Provide complete local Git history at `MYSHOP_RELEASE_REPOSITORY` (default
-   `/opt/myshop-friend/release.git`) containing the accepted SHA, each image
-   source SHA and the candidate SHA. The deployment lock protects ancestry
-   checks, so an older or unrelated release is refused. Transfer only the
-   manifest for the normal route. Production pulls changed application images
-   by exact digest and checks the resulting RepoDigest.
-4. Run `deploy-production.sh` with the manifest and the shared-host settings
-   below. Web-only updates start only Web; API-only updates start only API,
+1. Commit and push `main`, then run `bash scripts/release-production.sh` from
+   this repository. Ordinary pushes do not start a release. The entry reads the
+   live accepted SHA and lock, manually dispatches CI with that baseline, and
+   waits for its checks, one build per changed component, and manifest.
+   Documentation-only changes return without dispatching CI. An untrusted
+   baseline triggers all checks and both builds.
+2. The entry transfers only changed API/Web TARs from the same CI build. It
+   first accepts a verified Runner upload, if that route is enabled; otherwise
+   it downloads only the missing per-component Artifacts and resumes RSYNC
+   from the Mac. A separate candidate directory and the last accepted TAR
+   per component protect the transfer basis. The server validates checksums,
+   manifest digest, platform, source labels, local image IDs and unchanged
+   accepted images before import.
+3. The entry runs the shared-host preflight and existing deployment transaction.
+   The `MYSHOP_RELEASE_REPOSITORY` at `/opt/myshop-friend/release.git` must
+   contain the accepted SHA, each image source SHA, and the candidate SHA;
+   the deployer checks ancestry under its lock. Web-only updates start only Web;
+   API-only updates start only API,
    retaining the database backup and schema gates. Migrations keep the strict
    backup, API stop, migration, schema validation and recovery protection.
    Digests determine actual changes, so identical image content does not cause
@@ -48,7 +44,7 @@ the stack, restore a database from another host, or change DNS or TLS.
    unchanged. If history changed or cannot be read, application services stay
    stopped and the recovery point remains available. No database restore is
    automatic.
-5. Verify the accepted SHA, image digests, service and database health, and the
+4. Verify the accepted SHA, image digests, service and database health, and the
    public homepage plus `/api/site/config`. Do not use the disabled candidate site.
 
 API runs Maven `verify` once, checks and saves the resulting JAR with its SHA-256
@@ -216,12 +212,25 @@ shared Compose file pins each GHCR image by digest as well as a content-named
 tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
 legacy production Compose remains on its existing references.
 
-Normal deployment uses `MYSHOP_OFFLINE_IMAGES=0`: after the manually triggered
-MyShop CI publishes a manifest, run `deploy-production.sh` with that manifest
-on the production host. The host pulls only changed API/Web digest references
-from GHCR, with at most three bounded attempts per image. A failed pull leaves
-the accepted release running and does not start an offline export. Keep the
-accepted runtime tags and rollback image IDs available when changing modes.
+Routine releases use `bash scripts/release-production.sh` from a committed and
+pushed local `main`. The entry reads the actual production accepted SHA and
+dispatches the manual CI with that baseline. CI selects tests and image builds
+independently, exports each changed image from its single build, and publishes
+per-component GitHub Artifacts plus the immutable manifest. The entry downloads
+only components absent from the server staging area, then uses RSYNC with
+`--checksum`, `--copy-dest` and `--partial-dir` to upload them. Each transfer
+stays in an independent candidate directory; the last accepted API/Web TARs
+remain as read-only RSYNC bases. The server checks TAR SHA-256, CI image
+identity, source label, linux/amd64, and the accepted local image ID for any
+unchanged component before importing. It then uses the existing offline-mode
+deployment transaction, health checks, backup, atomic accepted state, and
+rollback. After acceptance, the private environment returns to
+`MYSHOP_OFFLINE_IMAGES=0`; production does not need GHCR access for this path.
+The runner-to-server path is disabled by default because its November 27, 2026
+probe transferred only 3.4 MiB of a 32 MiB file before the 240-second bound.
+If that route is separately enabled and succeeds, the entry skips that
+component's Artifact download. Failed transfers leave the accepted release and
+candidate staging intact for resumption.
 
 For an explicitly chosen emergency release, dispatch **MyShop emergency offline export** on
 `main` with the full SHA of an already successful CI release. It pulls only the

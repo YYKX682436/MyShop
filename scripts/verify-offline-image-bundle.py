@@ -73,7 +73,7 @@ def canonical_sha256(value: object) -> str:
 
 def validate_bundle(path: Path) -> dict:
     bundle = read_json(path, "image bundle")
-    if set(bundle) != {"version", "source_sha", "platform", "images"} or bundle.get("version") != 4:
+    if set(bundle) != {"version", "source_sha", "platform", "images"} or bundle.get("version") not in (4, 5):
         fail("image bundle version or fields are unsupported")
     if not isinstance(bundle.get("source_sha"), str) or not SHA.fullmatch(bundle["source_sha"]):
         fail("source_sha must be a full lowercase SHA")
@@ -86,10 +86,17 @@ def validate_bundle(path: Path) -> dict:
         "source_ref", "source_digest", "source_sha", "archive_ref", "config_digest",
         "runtime_config_digest", "rootfs_diff_ids", "loaded_image_id", "archive", "archive_sha256",
     }
+    if bundle["version"] == 5:
+        expected_fields.add("reuse_accepted")
     for service in SERVICES:
         item = images[service]
         if not isinstance(item, dict) or set(item) != expected_fields:
             fail(f"images.{service} fields are unsupported")
+        reused = bundle["version"] == 5 and item["reuse_accepted"] is True
+        if bundle["version"] == 5 and not isinstance(item["reuse_accepted"], bool):
+            fail(f"images.{service}.reuse_accepted must be boolean")
+        if reused and service not in APP_SERVICES:
+            fail(f"images.{service} cannot reuse an accepted app image")
         if service in APP_SERVICES:
             image_sha = item.get("source_sha")
             if not isinstance(image_sha, str) or not SHA.fullmatch(image_sha):
@@ -107,7 +114,7 @@ def validate_bundle(path: Path) -> dict:
             fail(f"images.{service}.source_ref is not the approved digest ref")
         if not isinstance(item.get("source_digest"), str) or not DIGEST.fullmatch(item["source_digest"]):
             fail(f"images.{service}.source_digest is invalid")
-        if item.get("archive_ref") != expected_archive_ref:
+        if item.get("archive_ref") != expected_archive_ref and not (reused and item.get("archive_ref") == expected_ref):
             fail(f"images.{service}.archive_ref is invalid")
         if service in APP_SERVICES:
             for field in ("config_digest", "runtime_config_digest"):
@@ -116,7 +123,10 @@ def validate_bundle(path: Path) -> dict:
             diff_ids = item.get("rootfs_diff_ids")
             if not isinstance(diff_ids, list) or not diff_ids or any(not isinstance(value, str) or not DIGEST.fullmatch(value) for value in diff_ids):
                 fail(f"images.{service}.rootfs_diff_ids is invalid")
-            if item.get("archive") != f"{service}.tar" or not isinstance(item.get("archive_sha256"), str) or not HEX.fullmatch(item["archive_sha256"]):
+            if reused:
+                if item.get("archive") != "" or item.get("archive_sha256") != "" or item.get("loaded_image_id") != item.get("config_digest"):
+                    fail(f"images.{service} accepted image identity is invalid")
+            elif item.get("archive") != f"{service}.tar" or not isinstance(item.get("archive_sha256"), str) or not HEX.fullmatch(item["archive_sha256"]):
                 fail(f"images.{service} archive identity is invalid")
         else:
             if (item.get("config_digest") != "" or item.get("runtime_config_digest") != ""
@@ -153,6 +163,10 @@ def verify_archives(bundle: dict, directory: Path) -> None:
         fail(f"archive directory is unavailable: {exc}")
     for service in APP_SERVICES:
         item = bundle["images"][service]
+        if item.get("reuse_accepted") is True:
+            if (directory / f"{service}.tar").exists():
+                fail(f"{service} unexpectedly transferred an unchanged archive")
+            continue
         archive = directory / item["archive"]
         if archive.is_symlink() or not archive.is_file() or archive.resolve(strict=True).parent != root:
             fail(f"{service} archive is missing, symlinked, or outside the transfer directory")
@@ -222,7 +236,7 @@ def verify_local_images(bundle: dict, bundle_path: Path, allow_unrecorded: bool 
             fail(f"{service} loaded image ID has not been recorded")
         if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
             fail(f"{service} loaded platform is not linux/amd64")
-        if item["archive_ref"] not in (image.get("RepoTags") or []):
+        if item["archive_ref"] not in (image.get("RepoTags") or []) and item["archive_ref"] not in (image.get("RepoDigests") or []):
             fail(f"{service} loaded image tag differs from the bundle")
         if service in APP_SERVICES:
             if canonical_sha256(image.get("Config", {})) != item["runtime_config_digest"]:

@@ -24,6 +24,7 @@ bundle = json.load(open(sys.argv[1], encoding="utf-8"))
 print(bundle["images"][sys.argv[2]]["archive"])
 PY
 )
+  [[ -n "$image_archive" ]] || { printf 'REUSED_ACCEPTED_IMAGE service=%s\n' "$service"; return; }
   docker load --input "$archive_dir/$image_archive" >/dev/null || die "Docker could not import $service"
 }
 for service in api web; do load_image "$service"; done

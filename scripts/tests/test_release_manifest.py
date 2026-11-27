@@ -44,6 +44,7 @@ class ReleaseManifestTests(unittest.TestCase):
             **os.environ,
             "SOURCE_SHA": SOURCE,
             "BASELINE_SHA": BASE,
+            "ACCEPTED_SHA": BASE,
             "API_BUILD": "true",
             "API_DIGEST": API_DIGEST,
             "WEB_BUILD": "false",
@@ -69,6 +70,8 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         release = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(release["source_sha"], SOURCE)
+        self.assertEqual(release["accepted_sha"], BASE)
+        self.assertEqual(release["version"], 3)
         self.assertEqual(release["built_services"], ["api"])
         self.assertEqual(release["images"]["api"]["source_sha"], SOURCE)
         self.assertEqual(release["images"]["web"]["source_sha"], BASE)
@@ -79,6 +82,11 @@ class ReleaseManifestTests(unittest.TestCase):
         result, _ = self.run_creator(BASELINE_SHA="", API_BUILD="true", WEB_BUILD="false")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("both service images", result.stderr)
+
+    def test_mismatched_production_baseline_is_rejected(self):
+        result, _ = self.run_creator(ACCEPTED_SHA="c" * 40)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("baseline must equal", result.stderr)
 
     def test_v1_full_sha_manifest_remains_readable(self):
         old = {

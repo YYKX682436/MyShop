@@ -32,7 +32,7 @@ except Exception as exc:
 if not isinstance(manifest, dict) or manifest.get("project") != project or project != "myshop":
     fail("manifest project is unsupported")
 version = manifest.get("version")
-if type(version) is not int or version not in (1, 2):
+if type(version) is not int or version not in (1, 2, 3):
     fail("manifest version is unsupported")
 source_sha = manifest.get("source_sha")
 if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
@@ -58,8 +58,13 @@ if version == 1:
     # so production keeps the strict API stop/backup/schema transaction.
     database_migration = True
 else:
-    if set(manifest) != {"version", "project", "source_sha", "created_at", "built_services", "database_migration", "images"}:
-        fail("manifest v2 fields are unsupported")
+    expected_fields = {"version", "project", "source_sha", "created_at", "built_services", "database_migration", "images"}
+    if version == 3:
+        expected_fields.add("accepted_sha")
+        if not isinstance(manifest.get("accepted_sha"), str) or not SHA.fullmatch(manifest["accepted_sha"]):
+            fail("accepted_sha must be a full lowercase SHA")
+    if set(manifest) != expected_fields:
+        fail("manifest fields are unsupported")
     built_services = manifest.get("built_services")
     if (not isinstance(built_services, list)
             or any(not isinstance(item, str) or item not in SERVICES for item in built_services)
@@ -71,7 +76,7 @@ else:
         fail("database_migration must be a boolean")
 
 normalized = {
-    "version": 2,
+    "version": 3 if version == 3 else 2,
     "project": project,
     "source_sha": source_sha,
     "created_at": created_at,
@@ -79,6 +84,8 @@ normalized = {
     "database_migration": database_migration,
     "images": {},
 }
+if version == 3:
+    normalized["accepted_sha"] = manifest["accepted_sha"]
 for service in SERVICES:
     item = images.get(service)
     if not isinstance(item, dict):

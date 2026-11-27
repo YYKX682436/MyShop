@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Select test and image-build scopes from the last successful release."""
+"""Select test and image-build scopes from the production-accepted release."""
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 RELEASE_JOB = "Publish immutable release manifest"
 WEB_ROOT_FILES = {
@@ -24,7 +26,11 @@ DEPLOYMENT_SCRIPTS = {
     "scripts/create-predeploy-backup.sh", "scripts/check-production-schema.sh",
 }
 
-SCOPE_KEYS = ("api_test", "web_test", "compose_test", "api_image", "web_image", "runtime", "migration")
+SCOPE_KEYS = ("api_test", "web_test", "compose_test", "api_image", "web_image", "runtime", "migration",
+              "api_full_test", "web_full_test")
+SHA = re.compile(r"^[0-9a-f]{40}$")
+CORE_PATH = re.compile(r"payment|balance|order|deliver|inventory|stock|licen[sc]|authoriz|auth/|concurr|transaction|refund", re.I)
+WEB_STATIC = (".css", ".scss", ".png", ".jpg", ".jpeg", ".webp", ".avif", ".svg", ".ico", ".woff", ".woff2")
 
 
 def all_scopes() -> dict[str, bool]:
@@ -50,24 +56,34 @@ def classify(paths: list[str]) -> dict[str, bool]:
 
         if path.startswith("apps/api/src/main/"):
             scope["api_test"] = scope["web_test"] = scope["api_image"] = scope["runtime"] = True
+            if CORE_PATH.search(path):
+                scope["api_full_test"] = scope["web_full_test"] = True
             if path.startswith("apps/api/src/main/resources/db/"):
-                scope["compose_test"] = scope["migration"] = True
+                scope["compose_test"] = scope["migration"] = scope["api_full_test"] = True
             continue
         if path == "apps/api/pom.xml":
             scope["api_test"] = scope["web_test"] = scope["api_image"] = scope["runtime"] = True
+            scope["api_full_test"] = scope["web_full_test"] = True
             continue
         if path == "Dockerfile.api" or path.startswith("scripts/validate-api-build-artifact.py"):
             scope["api_test"] = scope["api_image"] = scope["runtime"] = True
+            scope["api_full_test"] = True
             continue
 
         if path.startswith("apps/web/"):
-            scope["web_test"] = scope["web_image"] = scope["runtime"] = True
+            scope["web_image"] = scope["runtime"] = True
+            if not path.endswith(WEB_STATIC):
+                scope["web_test"] = True
+            if CORE_PATH.search(path):
+                scope["web_test"] = scope["web_full_test"] = True
             continue
         if path in WEB_ROOT_FILES:
             scope["web_test"] = scope["web_image"] = scope["runtime"] = True
+            scope["web_full_test"] = True
             continue
         if path.startswith(("packages/", "apps/shared/")):
             scope["api_test"] = scope["web_test"] = scope["api_image"] = scope["web_image"] = scope["runtime"] = True
+            scope["api_full_test"] = scope["web_full_test"] = True
             continue
         if path.startswith("scripts/tests/") or path.startswith("scripts/test-"):
             scope["compose_test"] = True
@@ -79,11 +95,25 @@ def classify(paths: list[str]) -> dict[str, bool]:
             continue
 
         return all_scopes()
-    if scope["api_image"]:
-        scope["api_test"] = True
-    if scope["web_image"]:
-        scope["web_test"] = True
     return scope
+
+
+def targeted_api_tests(paths: list[str]) -> str:
+    """Select tests referencing changed Java types; empty means full verification."""
+    test_root = Path("apps/api/src/test/java")
+    changed = {Path(path).stem for path in paths
+               if path.startswith("apps/api/src/main/") and path.endswith(".java")}
+    changed.update(Path(path).stem for path in paths
+                   if path.startswith("apps/api/src/test/") and path.endswith("Test.java"))
+    if not changed or not test_root.is_dir():
+        return ""
+    names = []
+    patterns = [re.compile(rf"\b{re.escape(name)}\b") for name in changed]
+    for test in test_root.rglob("*Test.java"):
+        source = test.read_text(encoding="utf-8")
+        if test.stem in changed or any(pattern.search(source) for pattern in patterns):
+            names.append(test.stem)
+    return ",".join(sorted(set(names))) if 0 < len(names) <= 20 else ""
 
 
 def command(*args: str) -> str:
@@ -160,26 +190,42 @@ def main() -> None:
     baseline = "none; running all checks and building both images"
     baseline_sha = ""
     baseline_run_id = ""
+    api_filter = ""
     sha = os.environ["GITHUB_SHA"]
     repository = os.environ["GITHUB_REPOSITORY"]
+    accepted_sha = os.environ.get("MYSHOP_ACCEPTED_SHA", "")
+    if not SHA.fullmatch(accepted_sha):
+        raise SystemExit("MYSHOP_ACCEPTED_SHA must be the observed production accepted SHA")
     validate_manual_release(repository, sha, os.environ["GITHUB_RUN_ID"],
                             os.environ.get("GITHUB_REF", ""), os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
     try:
         if command("git", "rev-parse", "HEAD").strip() != sha:
             raise ValueError("checkout does not match the workflow SHA")
-        prior = prior_release(repository, sha, os.environ["GITHUB_RUN_ID"])
-        if prior:
-            baseline_sha, run_id = prior
+        if subprocess.run(["git", "merge-base", "--is-ancestor", accepted_sha, sha],
+                          timeout=10).returncode:
+            raise SystemExit("production accepted SHA is not an ancestor of this release")
+        run_id = successful_release_for_sha(repository, accepted_sha, os.environ["GITHUB_RUN_ID"])
+        if run_id:
+            baseline_sha = accepted_sha
             baseline_run_id = str(run_id)
             raw = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", baseline_sha, sha],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).stdout
             paths = [path.decode("utf-8") for path in raw.split(b"\0") if path]
             scope = classify(paths)
-            baseline = f"{baseline_sha} (successful release run {run_id})"
+            baseline = f"{baseline_sha} (production accepted; CI run {run_id})"
+            if scope["api_test"] and not scope["api_full_test"]:
+                api_filter = targeted_api_tests(paths)
+                if not api_filter:
+                    scope["api_full_test"] = True
+            else:
+                api_filter = ""
+        else:
+            api_filter = ""
     except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         print(f"CI scope fallback: {type(exc).__name__}: {exc}", file=sys.stderr)
 
     result = "".join(f"{key}={str(value).lower()}\n" for key, value in scope.items())
+    result += f"api_test_filter={api_filter}\n"
     result += f"baseline_sha={baseline_sha}\nbaseline_run_id={baseline_run_id}\n"
     print(f"validated baseline: {baseline}\n{result}", end="")
     if os.environ.get("GITHUB_OUTPUT"):

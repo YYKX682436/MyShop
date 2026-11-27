@@ -2,6 +2,11 @@ name: MyShop CI
 
 on:
   workflow_dispatch:
+    inputs:
+      accepted_sha:
+        description: Production accepted full Git SHA, read immediately before dispatch
+        required: true
+        type: string
 
 concurrency:
   group: myshop-manual-release
@@ -24,7 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       api_test: ${{ steps.changes.outputs.api_test }}
+      api_full_test: ${{ steps.changes.outputs.api_full_test }}
+      api_test_filter: ${{ steps.changes.outputs.api_test_filter }}
       web_test: ${{ steps.changes.outputs.web_test }}
+      web_full_test: ${{ steps.changes.outputs.web_full_test }}
       compose_test: ${{ steps.changes.outputs.compose_test }}
       api_image: ${{ steps.changes.outputs.api_image }}
       web_image: ${{ steps.changes.outputs.web_image }}
@@ -36,19 +44,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Compare with the latest successful release
+      - name: Compare with the production accepted release
         id: changes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MYSHOP_ACCEPTED_SHA: ${{ inputs.accepted_sha }}
         run: python3 scripts/ci-release-scope.py
 
   api:
     needs: scope
-    if: ${{ needs.scope.outputs.api_test == 'true' }}
+    if: ${{ needs.scope.outputs.api_test == 'true' || needs.scope.outputs.api_image == 'true' }}
     name: API build and tests
     runs-on: ubuntu-24.04
+    environment: production-upload
     outputs:
       image_digest: ${{ steps.publish.outputs.digest }}
+      direct_transfer: ${{ steps.api-direct.outcome }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -57,10 +68,12 @@ jobs:
           java-version: "25"
           cache: maven
       - name: Install image and video processing test dependencies
+        if: ${{ needs.scope.outputs.api_test == 'true' }}
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec icc-profiles-free ffmpeg
       - name: Build and test, including required PostgreSQL integration tests
+        if: ${{ needs.scope.outputs.api_full_test == 'true' }}
         working-directory: apps/api
         shell: bash
         run: |
@@ -100,6 +113,19 @@ jobs:
           if invalid:
               raise SystemExit("PostgreSQL integration contract failed:\n" + "\n".join(invalid))
           PY
+      - name: Build with targeted API tests
+        if: ${{ needs.scope.outputs.api_test == 'true' && needs.scope.outputs.api_full_test != 'true' }}
+        working-directory: apps/api
+        env:
+          API_TEST_FILTER: ${{ needs.scope.outputs.api_test_filter }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$API_TEST_FILTER" ]] || { echo 'Targeted API test selection is empty' >&2; exit 1; }
+          mvn -B "-Dtest=$API_TEST_FILTER" verify
+      - name: Compile and package API without optional tests
+        if: ${{ needs.scope.outputs.api_test != 'true' && needs.scope.outputs.api_image == 'true' }}
+        working-directory: apps/api
+        run: mvn -B -DskipTests verify
       - name: Package the exact tested API JAR and schema contract
         if: ${{ needs.scope.outputs.api_image == 'true' }}
         id: api-artifact
@@ -195,14 +221,43 @@ jobs:
           pulled_jar_sha=$(docker image inspect --format '{{index .Config.Labels "io.myshop.api.jar.sha256"}}' "$image@$digest")
           [[ "$pulled_revision" == "$SOURCE_SHA" && "$pulled_jar_sha" == "$API_JAR_SHA256" ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Export the built API image without rebuilding
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          archive="$RUNNER_TEMP/myshop-transfer-api-$GITHUB_SHA"
+          mkdir -p "$archive"
+          docker save --output "$archive/api.tar" "$MYSHOP_REGISTRY/myshop-api:$GITHUB_SHA"
+          python3 scripts/create-transfer-record.py api "$GITHUB_SHA" "$IMAGE_DIGEST" "$archive/api.tar" "$archive/api.record.json"
+      - name: Try bounded direct API transfer when enabled
+        id: api-direct
+        if: ${{ needs.scope.outputs.api_image == 'true' && vars.MYSHOP_RUNNER_DIRECT_ENABLED == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          UPLOAD_KEY: ${{ secrets.MYSHOP_UPLOAD_SSH_KEY }}
+          UPLOAD_KNOWN_HOSTS: ${{ secrets.MYSHOP_UPLOAD_KNOWN_HOSTS }}
+        run: bash scripts/rsync-runner-transfer.sh api "$RUNNER_TEMP/myshop-transfer-api-$GITHUB_SHA" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        with:
+          name: myshop-transfer-api-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-transfer-api-${{ github.sha }}/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
 
   web:
     needs: scope
-    if: ${{ needs.scope.outputs.web_test == 'true' }}
+    if: ${{ needs.scope.outputs.web_test == 'true' || needs.scope.outputs.web_image == 'true' }}
     name: Web checks and image
     runs-on: ubuntu-latest
+    environment: production-upload
     outputs:
       image_digest: ${{ steps.publish.outputs.digest }}
+      direct_transfer: ${{ steps.web-direct.outcome }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -214,12 +269,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @myshop/web exec tsc --noEmit
-      - run: pnpm --filter @myshop/web test:logic
+      - if: ${{ needs.scope.outputs.web_test == 'true' }}
+        run: pnpm --filter @myshop/web test:logic
       - name: Install Chromium for the focused admin payment regression
+        if: ${{ needs.scope.outputs.web_full_test == 'true' }}
         run: pnpm --filter @myshop/web exec playwright install chromium
-      - run: pnpm --filter @myshop/web test:admin-order-confirmation-ui
-      - run: pnpm --filter @myshop/web test:legacy-image-cache
-      - run: pnpm --filter @myshop/web lint
+      - if: ${{ needs.scope.outputs.web_full_test == 'true' }}
+        run: pnpm --filter @myshop/web test:admin-order-confirmation-ui
+      - if: ${{ needs.scope.outputs.web_full_test == 'true' }}
+        run: pnpm --filter @myshop/web test:legacy-image-cache
+      - if: ${{ needs.scope.outputs.web_full_test == 'true' }}
+        run: pnpm --filter @myshop/web lint
       - name: Build Next.js once for the image when Web changed
         if: ${{ needs.scope.outputs.web_image == 'true' }}
         run: pnpm --filter @myshop/web build
@@ -277,6 +337,33 @@ jobs:
           pulled_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest")
           [[ "$pulled_revision" == "$SOURCE_SHA" ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Export the built Web image without rebuilding
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        env:
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          archive="$RUNNER_TEMP/myshop-transfer-web-$GITHUB_SHA"
+          mkdir -p "$archive"
+          docker save --output "$archive/web.tar" "$MYSHOP_REGISTRY/myshop-web:$GITHUB_SHA"
+          python3 scripts/create-transfer-record.py web "$GITHUB_SHA" "$IMAGE_DIGEST" "$archive/web.tar" "$archive/web.record.json"
+      - name: Try bounded direct Web transfer when enabled
+        id: web-direct
+        if: ${{ needs.scope.outputs.web_image == 'true' && vars.MYSHOP_RUNNER_DIRECT_ENABLED == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          UPLOAD_KEY: ${{ secrets.MYSHOP_UPLOAD_SSH_KEY }}
+          UPLOAD_KNOWN_HOSTS: ${{ secrets.MYSHOP_UPLOAD_KNOWN_HOSTS }}
+        run: bash scripts/rsync-runner-transfer.sh web "$RUNNER_TEMP/myshop-transfer-web-$GITHUB_SHA" "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        with:
+          name: myshop-transfer-web-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-transfer-web-${{ github.sha }}/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
 
   compose:
     needs: scope
@@ -307,8 +394,8 @@ jobs:
     if: >-
       ${{ !cancelled() && github.ref == 'refs/heads/main' &&
           needs.scope.result == 'success' && needs.scope.outputs.runtime == 'true' &&
-          (needs.api.result == 'success' || (needs.scope.outputs.api_test == 'false' && needs.api.result == 'skipped')) &&
-          (needs.web.result == 'success' || (needs.scope.outputs.web_test == 'false' && needs.web.result == 'skipped')) &&
+          (needs.api.result == 'success' || (needs.scope.outputs.api_test == 'false' && needs.scope.outputs.api_image == 'false' && needs.api.result == 'skipped')) &&
+          (needs.web.result == 'success' || (needs.scope.outputs.web_test == 'false' && needs.scope.outputs.web_image == 'false' && needs.web.result == 'skipped')) &&
           (needs.compose.result == 'success' || (needs.scope.outputs.compose_test == 'false' && needs.compose.result == 'skipped')) }}
     runs-on: ubuntu-latest
     steps:
@@ -335,6 +422,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.sha }}
           BASELINE_SHA: ${{ needs.scope.outputs.baseline_sha }}
+          ACCEPTED_SHA: ${{ inputs.accepted_sha }}
           API_BUILD: ${{ needs.scope.outputs.api_image }}
           API_DIGEST: ${{ needs.api.outputs.image_digest }}
           WEB_BUILD: ${{ needs.scope.outputs.web_image }}
