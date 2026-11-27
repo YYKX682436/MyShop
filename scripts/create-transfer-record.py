@@ -38,7 +38,11 @@ with tarfile.open(archive, "r:") as tar:
     if config.get("os") != "linux" or config.get("architecture") != "amd64":
         raise SystemExit("archive platform differs from the verified linux/amd64 image")
     if canonical_sha256(config.get("config", {})) != canonical_sha256(image["Config"]):
-        raise SystemExit("archive runtime config differs from the verified CI image")
+        archive_config = config.get("config", {})
+        differing = sorted(key for key in set(archive_config) | set(image["Config"])
+                           if archive_config.get(key) != image["Config"].get(key))
+        raise SystemExit(f"archive runtime config differs from the verified CI image; keys={differing} "
+                         f"tar_config={config_digest} ci_image={image['Id']}")
     if config.get("rootfs", {}).get("diff_ids") != image["RootFS"]["Layers"]:
         raise SystemExit("archive rootfs layers differ from the verified CI image")
 sha = hashlib.sha256()

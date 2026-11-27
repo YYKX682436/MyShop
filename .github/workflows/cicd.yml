@@ -220,6 +220,8 @@ jobs:
           pulled_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest")
           pulled_jar_sha=$(docker image inspect --format '{{index .Config.Labels "io.myshop.api.jar.sha256"}}' "$image@$digest")
           [[ "$pulled_revision" == "$SOURCE_SHA" && "$pulled_jar_sha" == "$API_JAR_SHA256" ]]
+          docker tag "$(docker image inspect --format '{{.Id}}' "$image@$digest")" "$image"
+          [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$(docker image inspect --format '{{.Id}}' "$image@$digest")" ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Export the built API image without rebuilding
         if: ${{ needs.scope.outputs.api_image == 'true' }}
@@ -336,6 +338,8 @@ jobs:
           docker pull "$image@$digest"
           pulled_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest")
           [[ "$pulled_revision" == "$SOURCE_SHA" ]]
+          docker tag "$(docker image inspect --format '{{.Id}}' "$image@$digest")" "$image"
+          [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$(docker image inspect --format '{{.Id}}' "$image@$digest")" ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Export the built Web image without rebuilding
         if: ${{ needs.scope.outputs.web_image == 'true' }}
