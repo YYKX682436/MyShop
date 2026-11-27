@@ -56,6 +56,7 @@ import java.net.InetAddress
 import java.net.URI
 import java.net.URL
 import java.util.UUID
+import kotlin.math.roundToInt
 
 enum class AppGate { INPUT, VERIFYING, FIRST_LOAD, ENTERING, CHECKING, READY, BLOCKED, TEMPORARY_ERROR, PAGE_ERROR }
 
@@ -102,6 +103,7 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
     private var paymentTargetActivated = false
     private var paymentFlowStartedAt = 0L
     private var paymentReturnScript: androidx.webkit.ScriptHandler? = null
+    private var appDocumentStartScript: androidx.webkit.ScriptHandler? = null
     private var firstLoadTimeout: Runnable? = null
     private var homeNavigationPending = false
     private var webOverlayOpen = false
@@ -160,6 +162,7 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
             if (!prefs.contains(KEY_MOBILE_UA)) prefs.edit().putString(KEY_MOBILE_UA, original).apply()
             created.settings.userAgentString = toDesktopUserAgent(original)
             created.settings.loadWithOverviewMode = true
+            setDesktopInitialScale(created)
             applyUserAgentMetadata(created.settings, true)
             _ui.value = _ui.value.copy(desktopMode = true)
         }
@@ -189,7 +192,7 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
             loadWithOverviewMode = false
             cacheMode = WebSettings.LOAD_DEFAULT
         }
-        WebView.setWebContentsDebuggingEnabled(false)
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
             defaultUserAgentMetadata = WebSettingsCompat.getUserAgentMetadata(view.settings)
         }
@@ -285,6 +288,9 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 _ui.value = _ui.value.copy(currentUrl = url)
                 val bound = _ui.value.binding?.origin
+                if (bound != null && NativeOrigin.isSameOrigin(url, bound) && prefs.getBoolean(KEY_DESKTOP_MODE, false)) {
+                    setDesktopInitialScale(view)
+                }
                 if (bound != null && NativeOrigin.isSameOrigin(url, bound) && paymentFlowStartedAt > 0L) {
                     _ui.value = _ui.value.copy(paymentDomain = null)
                 }
@@ -320,7 +326,16 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             override fun onPageFinished(view: WebView, url: String) {
-                if (pendingFirstBinding == null) _ui.value = _ui.value.copy(currentUrl = url)
+                if (pendingFirstBinding == null) {
+                    _ui.value = _ui.value.copy(currentUrl = url)
+                    val origin = _ui.value.binding?.origin
+                    if (origin != null && NativeOrigin.isSameOrigin(url, origin)) {
+                        val desktopMode = prefs.getBoolean(KEY_DESKTOP_MODE, false)
+                        view.evaluateJavascript(
+                            "window.__AIKAYUN_APP__ && window.__AIKAYUN_APP__.applyViewportMode($desktopMode);",
+                        ) { if (desktopMode) setDesktopInitialScale(view) else view.setInitialScale(0) }
+                    }
+                }
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -638,15 +653,19 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
             response.put("requestId", requestId)
             replyProxy.postMessage(response.toString())
         }
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            val initialDesktopMode = prefs.getBoolean(KEY_DESKTOP_MODE, false)
-            WebViewCompat.addDocumentStartJavaScript(
-                view,
-                JS_BRIDGE_SCRIPT.replace("__AIKAYUN_DESKTOP_MODE__", initialDesktopMode.toString()),
-                exactRule
-            )
-        }
+        updateDocumentStartScript(view, binding.origin, prefs.getBoolean(KEY_DESKTOP_MODE, false))
         installedBridgeOrigin = binding.origin
+    }
+
+    private fun updateDocumentStartScript(view: WebView, origin: String, desktopMode: Boolean) {
+        appDocumentStartScript?.remove()
+        appDocumentStartScript = null
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+        appDocumentStartScript = WebViewCompat.addDocumentStartJavaScript(
+            view,
+            JS_BRIDGE_SCRIPT.replace("__AIKAYUN_DESKTOP_MODE__", desktopMode.toString()),
+            setOf(origin)
+        )
     }
 
     private fun handleBeginPayment(request: JSONObject?, boundOrigin: String): JSONObject {
@@ -1039,11 +1058,21 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
         if (!prefs.contains(KEY_MOBILE_UA)) prefs.edit().putString(KEY_MOBILE_UA, original).apply()
         view.settings.userAgentString = if (enabled) toDesktopUserAgent(original) else original
         view.settings.loadWithOverviewMode = enabled
+        if (enabled) setDesktopInitialScale(view) else view.setInitialScale(0)
         prefs.edit().putBoolean(KEY_DESKTOP_MODE, enabled).apply()
         applyUserAgentMetadata(view.settings, enabled)
         _ui.value = _ui.value.copy(desktopMode = enabled)
+        installedBridgeOrigin?.let { origin -> updateDocumentStartScript(view, origin, enabled) }
         view.evaluateJavascript("window.__AIKAYUN_APP__ && window.__AIKAYUN_APP__.applyViewportMode($enabled);", null)
         view.reload()
+    }
+
+    private fun setDesktopInitialScale(view: WebView) {
+        val density = view.resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
+        val widthPx = view.width.takeIf { it > 0 } ?: view.resources.displayMetrics.widthPixels
+        val widthDp = widthPx / density
+        val scalePercent = (widthDp / DESKTOP_VIEWPORT_WIDTH * 100f).roundToInt().coerceIn(25, 100)
+        view.setInitialScale(scalePercent)
     }
 
     fun updateInsets(top: Float, bottom: Float, ime: Float) {
@@ -1086,6 +1115,8 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
     fun rendererError(view: WebView) {
         if (webView === view) webView = null
         installedBridgeOrigin = null
+        appDocumentStartScript?.remove()
+        appDocumentStartScript = null
         (view.parent as? ViewGroup)?.removeView(view)
         runCatching { view.stopLoading(); view.destroy() }
         _ui.value = _ui.value.copy(gate = AppGate.PAGE_ERROR, message = "网页进程已结束。绑定和登录信息仍保留，可重新加载。", webViewGeneration = _ui.value.webViewGeneration + 1)
@@ -1110,6 +1141,8 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         mainHandler.removeCallbacksAndMessages(null)
+        appDocumentStartScript?.remove()
+        appDocumentStartScript = null
         nativeTransfers.values.forEach { it.closeAndDelete() }
         nativeTransfers.clear()
         webView?.apply {
@@ -1138,6 +1171,7 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
         private const val KEY_PAYMENT_RECOVERY = "paymentRecoveryUrl"
         private const val KEY_MOBILE_UA = "mobileUserAgent"
         private const val KEY_DESKTOP_MODE = "desktopMode"
+        private const val DESKTOP_VIEWPORT_WIDTH = 1280f
         private const val MAX_TEXT_TRANSFER_BYTES = 5L * 1024L * 1024L
         private const val MAX_IMAGE_TRANSFER_BYTES = 10L * 1024L * 1024L
         private const val MAX_BLOB_TRANSFER_BYTES = 16L * 1024L * 1024L
@@ -1215,13 +1249,21 @@ class ShopViewModel(application: Application) : AndroidViewModel(application) {
               const applyViewportMode = enabled => {
                 const apply = () => {
                   if (!document.head) return false;
-                  let meta = document.querySelector('meta[name="viewport"]');
-                  if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta); }
+                  const metas = [...document.querySelectorAll('meta[name="viewport"]')];
+                  const meta = metas[0] || document.createElement('meta');
+                  meta.name = 'viewport';
                   meta.content = enabled ? 'width=1280, initial-scale=1' : 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes';
+                  metas.forEach(candidate => { if (candidate !== meta) candidate.remove(); });
+                  meta.remove();
+                  document.head.prepend(meta);
                   document.documentElement.setAttribute('data-aikayun-desktop', enabled ? 'true' : 'false');
                   return true;
                 };
-                if (!apply()) document.addEventListener('DOMContentLoaded', apply, { once: true });
+                if (document.readyState === 'loading') {
+                  document.addEventListener('DOMContentLoaded', apply, { once: true });
+                } else {
+                  apply();
+                }
               };
               const applyInsets = insets => {
                 const apply = () => {

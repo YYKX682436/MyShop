@@ -202,6 +202,7 @@ private fun MorphBrandCard(
         val yOffset = cardY + barOffset
         val radius = lerp(30.dp, 28.dp, progress)
         val cardModifier = Modifier
+            .align(Alignment.TopCenter)
             .offset { IntOffset(0, with(density) { yOffset.toPx().roundToInt() }) }
             .width(cardWidth)
             .height(cardHeight)
