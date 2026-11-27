@@ -1,24 +1,30 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NotificationManagement } from "@/components/shared/announcement-management"
+import { ConfirmAlert } from "@/components/admin/shared"
 import { useRequireAuth } from "@/lib/hooks"
 import { formatYuan } from "@/lib/utils"
 import { AVATAR_ALLOWED_IMAGE_ACCEPT, getAvatarFileValidationError } from "@/lib/image-upload"
-import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteLevelUpgradeRule, type SubsiteOrder } from "@/services/api"
+import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteLevelUpgradeRule, type SubsiteOrder, type SubsiteOpening } from "@/services/api"
+
+const PREFIX_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
 export default function MySubsitePage() {
   const user = useRequireAuth()
   const [site, setSite] = useState<SubsiteInfo | null>(null)
-  const [opening, setOpening] = useState<{ enabled: boolean; opening_price: number; eligible: boolean } | null>(null)
+  const [opening, setOpening] = useState<SubsiteOpening | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [openError, setOpenError] = useState("")
+  const openInFlight = useRef(false)
   const [prefix, setPrefix] = useState("")
   const [name, setName] = useState("")
   const [favicon, setFavicon] = useState("")
@@ -49,11 +55,33 @@ export default function MySubsitePage() {
     finally { setLoading(false) }
   }, [page, orderPage])
   useEffect(() => { if (user) void load() }, [user, load])
-  async function open(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true)
-    try { await subsiteApi.open({ prefix, name }); toast.success("分站已开通"); await load() }
-    catch (e) { toast.error(e instanceof Error ? e.message : "开通失败") }
-    finally { setBusy(false) }
+  const domainSuffix = opening?.domain_suffix?.trim() ?? ""
+  const validPrefix = PREFIX_PATTERN.test(prefix)
+
+  function open(event: React.FormEvent) {
+    event.preventDefault()
+    if (busy || !validPrefix || !name.trim() || !domainSuffix) return
+    setOpenError("")
+    setConfirmOpen(true)
+  }
+
+  async function confirmSubsiteOpening() {
+    if (openInFlight.current || !validPrefix || !name.trim() || !domainSuffix) return
+    openInFlight.current = true
+    setBusy(true)
+    setOpenError("")
+    try {
+      await subsiteApi.open({ prefix, name })
+      setConfirmOpen(false)
+      toast.success("分站已开通")
+      await load()
+    } catch (e) {
+      setConfirmOpen(false)
+      setOpenError(e instanceof Error ? e.message : "开通失败")
+    } finally {
+      openInFlight.current = false
+      setBusy(false)
+    }
   }
   async function save(event: React.FormEvent) {
     event.preventDefault(); setBusy(true)
@@ -132,8 +160,84 @@ export default function MySubsitePage() {
         {!customers.length && <p className="text-sm text-muted-foreground">暂无客户</p>}
         <div className="flex items-center justify-between text-sm"><Button type="button" variant="ghost" disabled={page === 0 || busy} onClick={() => setPage(value => value - 1)}>上一页</Button><span>{page + 1} / {Math.max(1, totalPages)}</span><Button type="button" variant="ghost" disabled={page + 1 >= totalPages || busy} onClick={() => setPage(value => value + 1)}>下一页</Button></div>
       </section>
-    </> : opening?.enabled && opening.eligible ? <form onSubmit={open} className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">开通分站</h2><p className="text-sm">开通费用：{formatYuan(opening.opening_price)}，从余额扣除。</p>
-      <label className="block space-y-1 text-sm"><span>域名前缀</span><Input required maxLength={63} pattern="[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?" autoCapitalize="none" spellCheck={false} value={prefix} onChange={e => setPrefix(e.target.value)} /></label>
-      <label className="block space-y-1 text-sm"><span>网站名称</span><Input required maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label><Button type="submit" disabled={busy}>开通分站</Button></form> : <p>当前账号暂不可自助开通分站。</p>)}
+    </> : (
+      <div className="mx-auto w-full max-w-2xl space-y-5 pt-2">
+        <Image
+          src="/images/subsite-opening-banner.webp"
+          alt="拥有自己的商城，轻松开启赚钱模式。自主定价、发展代理、赚取差价。"
+          width={1200}
+          height={500}
+          unoptimized
+          preload
+          sizes="(max-width: 768px) calc(100vw - 2rem), 672px"
+          className="block h-auto w-full rounded-card"
+        />
+        {opening?.enabled && opening.eligible ? (
+          <>
+            <form onSubmit={open} className="content-surface space-y-5 rounded-card p-5">
+              <label className="block space-y-2 text-sm font-medium" htmlFor="subsite-prefix">
+                <span>域名前缀</span>
+                {domainSuffix ? (
+                  <div className="flex h-11 overflow-hidden rounded-control border border-input bg-surface transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+                    <Input
+                      id="subsite-prefix"
+                      required
+                      maxLength={63}
+                      pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?"
+                      autoCapitalize="none"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={prefix}
+                      aria-invalid={Boolean(prefix) && !validPrefix}
+                      aria-describedby="subsite-prefix-status"
+                      className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                      onChange={event => { setPrefix(event.target.value.toLowerCase()); setOpenError("") }}
+                    />
+                    <span className="inline-flex shrink-0 items-center border-l border-border-subtle bg-muted/60 px-3 text-sm text-muted-foreground">.{domainSuffix}</span>
+                  </div>
+                ) : (
+                  <p role="alert" className="rounded-control bg-destructive/5 px-3 py-2 text-sm font-normal text-destructive">分站域名配置不可用，暂不能开通。</p>
+                )}
+                <span id="subsite-prefix-status" className="block min-h-5 font-normal" aria-live="polite">
+                  {prefix && !validPrefix
+                    ? <span className="text-destructive">仅支持小写字母、数字和短横线，且首尾须为字母或数字。</span>
+                    : <span className="text-muted-foreground">分站网址预览：{validPrefix && prefix && domainSuffix ? prefix + "." + domainSuffix : "—"}</span>}
+                </span>
+              </label>
+              <label className="block space-y-2 text-sm font-medium" htmlFor="subsite-name">
+                <span>网站名称</span>
+                <Input id="subsite-name" required maxLength={100} value={name} onChange={event => { setName(event.target.value); setOpenError("") }} />
+              </label>
+              <div className="flex items-center justify-between gap-4 border-t border-border-subtle pt-4">
+                <div>
+                  <p className="text-sm font-medium">开通费用</p>
+                  <p className="mt-1 text-sm text-muted-foreground">从余额扣除</p>
+                </div>
+                <p className="text-xl font-semibold tabular-nums">{formatYuan(opening.opening_price)}</p>
+              </div>
+              {openError && <p role="alert" className="text-sm text-destructive">{openError}</p>}
+              <Button type="submit" size="lg" className="w-full" disabled={busy || !validPrefix || !name.trim() || !domainSuffix}>
+                {busy ? "正在开通…" : "立即开通"}
+              </Button>
+            </form>
+            <ConfirmAlert
+              open={confirmOpen}
+              onOpenChange={next => { if (!busy) setConfirmOpen(next) }}
+              title="确认开通分站"
+              description={"开通费用 " + formatYuan(opening.opening_price) + " 将从余额扣除。"}
+              confirmLabel={opening.opening_price > 0 ? "确认扣款并开通" : "确认开通"}
+              cancelLabel="返回修改"
+              loading={busy}
+              confirmDisabled={!validPrefix || !name.trim() || !domainSuffix}
+              onConfirm={() => { void confirmSubsiteOpening() }}
+            />
+          </>
+        ) : (
+          <p className="rounded-card bg-surface px-4 py-4 text-sm text-muted-foreground">
+            {opening && !opening.enabled ? "暂未开放自助开通。" : "当前账号暂不可自助开通分站。"}
+          </p>
+        )}
+      </div>
+    ))}
   </div>
 }

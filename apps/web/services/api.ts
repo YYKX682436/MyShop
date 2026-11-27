@@ -618,6 +618,12 @@ export const siteApi = {
     request<SiteConfig>("/site/config"),
 }
 
+export interface SubsiteOpening {
+  enabled: boolean
+  opening_price: number
+  eligible: boolean
+  domain_suffix: string | null
+}
 export interface SubsiteInfo {
   id: string; owner_id: string; prefix: string; name: string; enabled: boolean
   favicon_url: string | null
@@ -647,7 +653,7 @@ export interface SubsiteOrder { id: string; order_no: string; actual_amount: num
 
 export const subsiteApi = {
   mine: () => request<SubsiteInfo | null>("/subsite/mine"),
-  opening: () => request<{ enabled: boolean; opening_price: number; eligible: boolean }>("/subsite/opening"),
+  opening: () => request<SubsiteOpening>("/subsite/opening"),
   open: (data: { prefix: string; name: string }) => request<SubsiteInfo>("/subsite/open", { method: "POST", body: JSON.stringify(data) }),
   update: (data: Pick<SubsiteInfo, "name" | "favicon_url">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
   uploadFavicon: (file: File) => {

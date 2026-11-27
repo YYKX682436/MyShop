@@ -2,6 +2,7 @@ package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
+import com.myshop.config.SubsiteDomainRules;
 import com.myshop.context.SiteRequestContext;
 import com.myshop.entity.*;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URI;
 import java.util.*;
 
 @Service
@@ -83,9 +83,10 @@ public class SubsiteManagementService {
         String prefix = request.prefix() == null ? "" : request.prefix().trim().toLowerCase(Locale.ROOT);
         String name = text(request.name(), 100, true);
         if (!prefix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) throw bad("域名前缀无效");
-        String originHost = URI.create(publicSiteUrl).getHost().toLowerCase(Locale.ROOT);
+        SubsiteDomainRules domainRules = SubsiteDomainRules.fromPublicSiteUrl(publicSiteUrl);
+        String mainHost = domainRules.mainHost();
         if (Set.of("mc", "www", "api", "admin", "mail", "kf", "jc", "dl", "openlist", "myshop-candidate", "tp").contains(prefix)
-                || prefix.equals(originHost.split("\\.")[0]) || Arrays.stream(reservedPrefixes.split(","))
+                || prefix.equals(mainHost.split("\\.")[0]) || Arrays.stream(reservedPrefixes.split(","))
                 .anyMatch(s -> s.trim().equalsIgnoreCase(prefix))) throw bad("域名前缀已保留");
         SubsiteSettings config = settings.lockSettings().orElseThrow();
         UUID ownerId = admin ? request.ownerId() : operatorId;
@@ -138,7 +139,12 @@ public class SubsiteManagementService {
                 && sites.findByOwnerId(user.getId()).isEmpty()
                 && jdbc.queryForObject("select count(*) from subsite_allowed_levels where level_id = ?", Long.class, user.getUserLevelId()) > 0
                 && levels.findById(config.getSupplyLevelId()).filter(UserLevel::isEnabled).isPresent();
-        return Map.of("enabled", config.isSelfServiceEnabled(), "opening_price", config.getOpeningPrice(), "eligible", eligible);
+        Map<String,Object> result = new LinkedHashMap<>();
+        result.put("enabled", config.isSelfServiceEnabled());
+        result.put("opening_price", config.getOpeningPrice());
+        result.put("eligible", eligible);
+        result.put("domain_suffix", SubsiteDomainRules.fromPublicSiteUrl(publicSiteUrl).domainSuffix());
+        return result;
     }
     @Transactional(readOnly = true)
     public Map<String,Object> mine(UUID ownerId) { return sites.findByOwnerId(ownerId).map(this::view).orElse(null); }
@@ -374,8 +380,7 @@ public class SubsiteManagementService {
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("id",s.getId()); result.put("owner_id",s.getOwnerId()); result.put("prefix",s.getPrefix());
         result.put("name",s.getName()); result.put("enabled",s.isEnabled()); result.put("favicon_url",s.getFaviconUrl());
-        String host = URI.create(publicSiteUrl).getHost(); int dot = host.indexOf('.');
-        result.put("url", dot < 0 ? null : "https://" + s.getPrefix() + "." + host.substring(dot+1));
+        result.put("url", SubsiteDomainRules.fromPublicSiteUrl(publicSiteUrl).subsiteUrl(s.getPrefix()));
         result.put("user_count", jdbc.queryForObject("select count(*) from users where subsite_id = ?", Long.class, s.getId()));
         return result;
     }

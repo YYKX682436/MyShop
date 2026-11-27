@@ -13,6 +13,17 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class SubsiteManagementServiceTest {
+    @Test void openingUsesTheSharedSubsiteDomainRule() {
+        var settings=mock(SubsiteSettingsRepository.class);
+        var jdbc=mock(JdbcTemplate.class);
+        var service=new SubsiteManagementService(mock(SubsiteRepository.class),settings,mock(UserRepository.class),
+                mock(UserLevelRepository.class),jdbc,mock(BalanceTransactionRepository.class),mock(ImageUploadService.class));
+        ReflectionTestUtils.setField(service,"publicSiteUrl","https://mc.mc520.top");
+        when(settings.findById(1)).thenReturn(Optional.of(new SubsiteSettings()));
+
+        assertEquals("mc520.top",service.opening(null).get("domain_suffix"));
+    }
+
     @Test void faviconUploadAndUpdatesAreRestrictedToTheOwner() {
         var sites=mock(SubsiteRepository.class); var images=mock(ImageUploadService.class);
         var jdbc=mock(JdbcTemplate.class);
