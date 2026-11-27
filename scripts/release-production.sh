@@ -55,7 +55,7 @@ server_sha=$(ssh myshop-friend-prod "python3 -c 'import json;print(json.load(ope
 [[ "$server_sha" == "$accepted" ]] || die 'production accepted SHA changed while CI ran'
 ssh myshop-friend-prod "install -d -m 0700 /srv/myshop-friend/releases/$sha /srv/myshop-upload/staging/$sha"
 "$rsync_bin" -a "$temp/release-manifest.json" "myshop-friend-prod:/srv/myshop-friend/releases/$sha/release-manifest.json"
-git bundle create "$temp/release.bundle" "$accepted..$sha"
+git bundle create "$temp/release.bundle" main "^$accepted"
 "$rsync_bin" -a "$temp/release.bundle" "myshop-friend-prod:/srv/myshop-friend/releases/$sha/release.bundle"
 ssh myshop-friend-prod "git --git-dir=/opt/myshop-friend/release.git fetch '/srv/myshop-friend/releases/$sha/release.bundle' '$sha' >/dev/null"
 for helper in create-offline-image-bundle.py verify-offline-image-bundle.py import-offline-image-bundle.sh validate-release-manifest.py write-deploy-state.sh deploy-production.sh finalize-transferred-release.sh; do
