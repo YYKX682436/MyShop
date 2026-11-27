@@ -10,6 +10,10 @@ import sys
 import tarfile
 from pathlib import Path
 
+def canonical_sha256(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
 if len(sys.argv) != 6:
     raise SystemExit("usage: create-transfer-record.py <api|web> <source-sha> <registry-digest> <image-tar> <record-json>")
 service, source_sha, digest, archive_text, record_text = sys.argv[1:]
@@ -31,8 +35,12 @@ with tarfile.open(archive, "r:") as tar:
     config_bytes = tar.extractfile(entries[0]["Config"]).read()
     config = json.loads(config_bytes)
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-    if config_digest != image["Id"] or config.get("os") != "linux" or config.get("architecture") != "amd64":
-        raise SystemExit("archive config differs from the verified linux/amd64 image")
+    if config.get("os") != "linux" or config.get("architecture") != "amd64":
+        raise SystemExit("archive platform differs from the verified linux/amd64 image")
+    if canonical_sha256(config.get("config", {})) != canonical_sha256(image["Config"]):
+        raise SystemExit("archive runtime config differs from the verified CI image")
+    if config.get("rootfs", {}).get("diff_ids") != image["RootFS"]["Layers"]:
+        raise SystemExit("archive rootfs layers differ from the verified CI image")
 sha = hashlib.sha256()
 with archive.open("rb") as handle:
     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -40,6 +48,8 @@ with archive.open("rb") as handle:
 record = {
     "version": 1, "service": service, "source_sha": source_sha,
     "registry_digest": digest, "image_id": image["Id"],
+    "exported_config_digest": config_digest,
+    "runtime_config_digest": canonical_sha256(image["Config"]),
     "tar_sha256": sha.hexdigest(), "archive_tag": tag,
     "rootfs_diff_ids": image["RootFS"]["Layers"],
 }

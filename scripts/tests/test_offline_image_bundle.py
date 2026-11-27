@@ -204,6 +204,10 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     accepted_path.write_text(json.dumps(accepted_state), encoding="utf-8")
     transfer = {"version": 1, "service": "api", "source_sha": SHA,
                 "registry_digest": DIGESTS["api"], "image_id": CONFIG_IDS["api"],
+                "exported_config_digest": CONFIG_IDS["api"],
+                "runtime_config_digest": "sha256:" + hashlib.sha256(json.dumps(
+                    CONFIGS["api"]["config"], sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=False).encode()).hexdigest(),
                 "tar_sha256": hashlib.sha256((partial_dir / "api.tar").read_bytes()).hexdigest(),
                 "archive_tag": archive_ref("api"),
                 "rootfs_diff_ids": CONFIGS["api"]["rootfs"]["diff_ids"]}
