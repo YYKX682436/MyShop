@@ -14,6 +14,14 @@ def canonical_sha256(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
+
+# Docker image inspect can add these legacy container defaults to Config. They
+# do not affect the image's runtime settings and are absent from docker save.
+INSPECT_ONLY_DEFAULTS = {
+    "AttachStderr", "AttachStdin", "AttachStdout", "Domainname", "Hostname",
+    "Image", "OpenStdin", "StdinOnce", "Tty",
+}
+
 if len(sys.argv) != 6:
     raise SystemExit("usage: create-transfer-record.py <api|web> <source-sha> <registry-digest> <image-tar> <record-json>")
 service, source_sha, digest, archive_text, record_text = sys.argv[1:]
@@ -35,12 +43,13 @@ with tarfile.open(archive, "r:") as tar:
     config_bytes = tar.extractfile(entries[0]["Config"]).read()
     config = json.loads(config_bytes)
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-    if config.get("os") != "linux" or config.get("architecture") != "amd64":
+    if config_digest != image["Id"] or config.get("os") != "linux" or config.get("architecture") != "amd64":
         raise SystemExit("archive platform differs from the verified linux/amd64 image")
-    if canonical_sha256(config.get("config", {})) != canonical_sha256(image["Config"]):
-        archive_config = config.get("config", {})
-        differing = sorted(key for key in set(archive_config) | set(image["Config"])
-                           if archive_config.get(key) != image["Config"].get(key))
+    archive_config = config.get("config", {})
+    inspected_config = image["Config"]
+    differing = sorted(key for key in set(archive_config) | set(inspected_config)
+                       if archive_config.get(key) != inspected_config.get(key))
+    if any(key not in INSPECT_ONLY_DEFAULTS for key in differing):
         raise SystemExit(f"archive runtime config differs from the verified CI image; keys={differing} "
                          f"tar_config={config_digest} ci_image={image['Id']}")
     if config.get("rootfs", {}).get("diff_ids") != image["RootFS"]["Layers"]:
@@ -53,7 +62,7 @@ record = {
     "version": 1, "service": service, "source_sha": source_sha,
     "registry_digest": digest, "image_id": image["Id"],
     "exported_config_digest": config_digest,
-    "runtime_config_digest": canonical_sha256(image["Config"]),
+    "runtime_config_digest": canonical_sha256(archive_config),
     "tar_sha256": sha.hexdigest(), "archive_tag": tag,
     "rootfs_diff_ids": image["RootFS"]["Layers"],
 }
