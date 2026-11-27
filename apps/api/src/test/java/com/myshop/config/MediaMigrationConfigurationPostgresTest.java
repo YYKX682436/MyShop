@@ -51,7 +51,7 @@ class MediaMigrationConfigurationPostgresTest {
             when(storageProvider.getObject()).thenReturn(storage); when(gateProvider.getObject()).thenReturn(gate);
             new MediaMigrationConfiguration().stagedMediaMigration(data, storageProvider, gateProvider,
                     "/api/uploads", "http://localhost:3000").migrate(flyway);
-            assertEquals("70", flyway.info().current().getVersion().getVersion());
+            assertEquals("71", flyway.info().current().getVersion().getVersion());
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=? AND t.tgname='myshop_media_guard' AND NOT t.tgisinternal", Integer.class, other));
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=? AND t.tgname='myshop_media_guard' AND NOT t.tgisinternal", Integer.class, publicTable));
             var after = request(); var available = new MockHttpServletResponse();
@@ -110,7 +110,7 @@ class MediaMigrationConfigurationPostgresTest {
             when(storageProvider.getObject()).thenReturn(storage); when(gateProvider.getObject()).thenReturn(gate);
             var strategy = new MediaMigrationConfiguration().stagedMediaMigration(data, storageProvider, gateProvider,
                     "/api/uploads", "https://mc.mc520.top");
-            assertEquals("70", flyway.info().current().getVersion().getVersion());
+            assertEquals("71", flyway.info().current().getVersion().getVersion());
             strategy.migrate(flyway);
 
             assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='AVATAR' AND field='avatar_url'", Integer.class, sharedAsset));
@@ -121,7 +121,7 @@ class MediaMigrationConfigurationPostgresTest {
             assertNotNull(jdbc.queryForObject("SELECT deleted_at FROM media_assets WHERE id=?", java.sql.Timestamp.class, tombstoneAsset));
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM media_assets WHERE storage_path=?", Integer.class, unindexedLegacyPath),
                     "a post-V64 startup must not rerun the old public directory index");
-            assertEquals("70", flyway.info().current().getVersion().getVersion());
+            assertEquals("71", flyway.info().current().getVersion().getVersion());
 
             strategy.migrate(flyway);
             var repeated = new com.myshop.service.MediaLegacyIndexer(jdbc, storage,

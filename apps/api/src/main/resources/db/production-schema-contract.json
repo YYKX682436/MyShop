@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 70,
-  "latest_migration_version": "70",
+  "migration_count": 71,
+  "latest_migration_version": "71",
   "tables": {
     "media_assets": ["id", "storage_path", "display_path", "thumbnail_path", "clear_path", "original_filename", "media_type", "mime_type", "size_bytes", "original_size_bytes", "thumbnail_size_bytes", "clear_size_bytes", "width", "height", "duration_ms", "content_hash", "source_hash", "scope", "uploader_id", "owner_user_id", "created_at", "processing_status", "upload_uri", "declared_size_bytes", "processing_error", "processing_reason", "deleted_at", "cleanup_error", "upload_cleanup_error", "reused_asset_id"],
     "media_references": ["asset_id", "owner_type", "owner_id", "field"],
