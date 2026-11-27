@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Store,
   UserPlus,
+  Wallet,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -37,7 +38,7 @@ function AccountLink({ href, icon: Icon, label }: AccountLinkProps) {
       href={href}
       className="group flex min-h-12 items-center gap-3 px-4 text-sm text-foreground transition-colors hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-control bg-foreground/[0.05] text-muted-foreground transition-colors group-hover:text-foreground">
+      <span className="-translate-x-1 flex size-8 shrink-0 items-center justify-center rounded-control bg-foreground/[0.05] text-muted-foreground transition-colors group-hover:text-foreground sm:translate-x-0">
         <Icon className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
@@ -62,13 +63,16 @@ function LoadingAccount() {
           <div className="size-14 shrink-0 animate-pulse rounded-card bg-foreground/[0.07] sm:size-16" />
           <div className="min-w-0 flex-1 space-y-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-6 w-40 max-w-full animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-7 w-40 max-w-full animate-pulse rounded-full bg-foreground/[0.07]" />
           </div>
         </div>
       </section>
-      <section className="account-balance bg-surface p-2 sm:p-3" data-layout="account-balance" aria-hidden="true">
+      <section className="account-balance p-2 sm:p-3" data-layout="account-balance" aria-hidden="true">
         <div className="flex min-h-12 items-center justify-between gap-3 px-1 sm:px-2">
-          <div className="h-8 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="-translate-x-0.5 size-9 shrink-0 animate-pulse rounded-control bg-primary/10 sm:-translate-x-1.5" />
+            <div className="h-8 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
+          </div>
           <div className="h-10 w-14 animate-pulse rounded-control bg-foreground/[0.07]" />
         </div>
       </section>
@@ -218,22 +222,22 @@ export default function MyPage() {
               </button>
             </h2>
             {isAdmin ? identityBadge : hasUserIdentity && (
-              <div className="mt-1 inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full border border-amber-200/80 bg-amber-50/75 px-2.5 py-1 text-xs font-medium leading-4 text-amber-900 dark:border-amber-300/20 dark:bg-amber-950/35 dark:text-amber-100">
+              <div className="mt-1 inline-flex h-7 w-fit min-w-0 max-w-full items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-50/75 px-2.5 text-[11px] font-medium leading-none text-amber-900 dark:border-amber-300/20 dark:bg-amber-950/35 dark:text-amber-100">
                 {user.user_level_name && (
                   <span className="inline-flex min-w-0 items-center gap-1.5">
-                    <Crown className="size-3.5 shrink-0" aria-hidden="true" />
+                    <Crown className="size-3 shrink-0" aria-hidden="true" />
                     <span className="min-w-0 truncate">{user.user_level_name}</span>
                   </span>
                 )}
                 {user.user_level_name && user.user_no !== null && (
-                  <span className="h-3.5 w-px shrink-0 bg-amber-900/25 dark:bg-amber-100/25" aria-hidden="true" />
+                  <span className="h-3 w-px shrink-0 bg-amber-900/25 dark:bg-amber-100/25" aria-hidden="true" />
                 )}
                 {user.user_no !== null && (
                   <button
                     type="button"
                     onClick={handleCopyUserId}
                     aria-label={t("my.copyUserId")}
-                    className="shrink-0 whitespace-nowrap text-current transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    className="inline-flex h-full shrink-0 items-center whitespace-nowrap text-current transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
                     {t("my.userId").replace("{id}", String(user.user_no))}
                   </button>
@@ -244,15 +248,20 @@ export default function MyPage() {
         </div>
       </section>
 
-      <section className="account-balance bg-surface p-2 sm:p-3" aria-label={t("my.balance")}>
+      <section className="account-balance p-2 sm:p-3" aria-label={t("my.balance")}>
         <div className="flex min-h-12 items-center justify-between gap-3 px-1 sm:px-2">
-          {balanceIsHistoryLink ? (
-            <Link href="/my/balance#history" aria-label={t("my.balanceHistory")} className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-              {balanceLabel}
-            </Link>
-          ) : (
-            <p className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums">{balanceLabel}</p>
-          )}
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="-translate-x-0.5 flex size-9 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary sm:-translate-x-1.5">
+              <Wallet className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
+            </span>
+            {balanceIsHistoryLink ? (
+              <Link href="/my/balance#history" aria-label={t("my.balanceHistory")} className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums transition-opacity hover:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                {balanceLabel}
+              </Link>
+            ) : (
+              <p className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground tabular-nums">{balanceLabel}</p>
+            )}
+          </div>
           {!user.unlimited && accountOverview?.recharge_enabled && (
             <Link href="/my/balance" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-control bg-primary/10 px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
               {t("my.recharge")}
@@ -287,7 +296,7 @@ export default function MyPage() {
           onClick={() => void logout().catch(() => toast.error("退出失败，请重试"))}
           className="flex min-h-12 w-full items-center gap-3 px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-destructive"
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-control bg-destructive/[0.10]">
+          <span className="-translate-x-1 flex size-8 shrink-0 items-center justify-center rounded-control bg-destructive/[0.10] sm:translate-x-0">
             <LogOut className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
           </span>
           <span>{t("nav.logout")}</span>

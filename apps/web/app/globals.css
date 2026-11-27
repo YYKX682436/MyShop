@@ -717,8 +717,9 @@
   .account-balance {
     min-width: 0;
     overflow: hidden;
-    border: 1px solid hsl(var(--border-subtle));
+    border: 1px solid hsl(var(--primary) / 0.14);
     border-radius: var(--radius-group);
+    background-color: hsl(var(--primary) / 0.045);
   }
 
   .auth-page {
@@ -1264,7 +1265,7 @@
   }
   .product-description-content { padding-block: 0.5rem 1rem; }
   .account-identity { gap: 0.5rem; }
-  .account-balance { border-color: hsl(var(--border-subtle)); border-radius: var(--radius-group); }
+  .account-balance { border-color: hsl(var(--primary) / 0.14); border-radius: var(--radius-group); }
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
