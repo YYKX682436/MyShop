@@ -1,6 +1,6 @@
 # MyShop production storage-lifecycle runbook
 
-This runbook describes the only supported production model. The application
+This historical runbook describes the separate `/opt/myshop` installation. The application
 artifact is an immutable container image reference plus its builder-generated
 release manifest. Production runs only from the immutable image manifest
 recorded under `/opt/myshop/runtime`. Production normally never builds

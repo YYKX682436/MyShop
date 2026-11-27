@@ -77,32 +77,11 @@ if recovery fails.
 After acceptance, update the original private environment's release references
 to the newly accepted SHA and remove the temporary environment copy.
 
-Use the currently configured loopback port, confirmed on the host. The example
-below uses `8082`; if it differs, match the verified production binding.
-`PUBLIC_SITE_URL` in the existing private configuration remains
-`https://mc.mc520.top`. Do not copy secrets into the repository or logs.
-
-```bash
-export MYSHOP_RUNTIME_ROOT=/opt/myshop-friend/runtime
-export MYSHOP_ENV_FILE=/etc/myshop-friend/myshop.env
-export MYSHOP_COMPOSE_FILE=/opt/myshop-friend/runtime/docker-compose.shared-server.yml
-export MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod
-export MYSHOP_SHARED_SERVER=1
-export MYSHOP_BACKUP_DIR=/srv/myshop-friend/backups/database
-export MYSHOP_STORAGE_MOUNTPOINT=/srv/myshop-friend
-export HOST_STORAGE_HEALTH_SCRIPT=/opt/myshop-friend/ops/shared-server/check-storage-health.sh
-export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
-export MYSHOP_RUN_HOST_MAINTENANCE=0
-export MYSHOP_RELEASE_REPOSITORY=/opt/myshop-friend/release.git
-export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
-export MYSHOP_OFFLINE_IMAGES=0
-export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
-export MYSHOP_SMOKE_HOST_HEADER=mc.mc520.top
-
-bash /opt/myshop-friend/scripts/preflight-shared-server.sh --mode upgrade
-# Only after preflight succeeds, substitute the validated new manifest path:
-bash /opt/myshop-friend/scripts/deploy-production.sh /path/to/new-release-manifest.json
-```
+Routine upgrades use only `bash scripts/release-production.sh` from the local
+repository. The manual forward-recovery procedure above is reserved for a
+failed migration and requires its separately verified manifest and bundle.
+The existing private configuration keeps `PUBLIC_SITE_URL=https://mc.mc520.top`
+and the confirmed loopback port. Do not copy secrets into the repository or logs.
 
 The existing production stack is independent of the friend's other sites and
 services. Do not run `scripts/bootstrap-greenfield.sh`, modify global
@@ -205,8 +184,8 @@ The shared-host Compose file uses copies of the upstream PostgreSQL, Caddy, and
 node-exporter manifests in the MyShop GHCR namespace. Routine application
 releases reuse their pinned digests.
 
-The three personal GHCR packages must be public for anonymous pulls from the
-friend server. Their contents are byte-for-byte copies of already public
+The three personal GHCR packages remain public for optional emergency or
+bootstrap pulls. Their contents are byte-for-byte copies of already public
 upstream images; no application secret or private source is included. The
 shared Compose file pins each GHCR image by digest as well as a content-named
 tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
