@@ -48,3 +48,14 @@ uploads/
 # External IP2Region databases (never commit binary data files)
 ipdb/
 *.xdb
+
+# Android local state, credentials and build output
+/apps/android/.gradle/
+/apps/android/.kotlin/
+/apps/android/**/build/
+/apps/android/local.properties
+/apps/android/signing.properties
+*.jks
+*.bks
+*.keystore
+!/apps/android/gradle/wrapper/gradle-wrapper.jar
