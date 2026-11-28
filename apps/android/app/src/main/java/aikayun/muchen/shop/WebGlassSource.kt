@@ -32,6 +32,7 @@ class ObservedWebView(context: Context) : WebView(context) {
     private var accumulated = 0f
     private var eligible = false
     private var vertical = false
+    private var mainMoved = false
     private var downAt = 0L
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
 
@@ -45,13 +46,14 @@ class ObservedWebView(context: Context) : WebView(context) {
     override fun invalidate() { super.invalidate(); if (!sampling) changed?.invoke() }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
+        if(eligible && t!=oldt && !sampling) mainMoved=true
         if (!sampling) changed?.invoke()
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x; startY = event.y; lastY = event.y
-                accumulated = 0f; eligible = true; vertical = false; downAt = event.eventTime
+                accumulated = 0f; eligible = true; vertical = false; mainMoved=false; downAt = event.eventTime
             }
             MotionEvent.ACTION_POINTER_DOWN -> eligible = false
             MotionEvent.ACTION_MOVE -> if (eligible && event.pointerCount == 1) {
@@ -64,10 +66,15 @@ class ObservedWebView(context: Context) : WebView(context) {
                     val step = event.y - lastY
                     if (step * accumulated < 0) accumulated = 0f
                     accumulated += step
-                    if (abs(accumulated) > slop * 3) {
-                        direction?.invoke(accumulated > 0)
-                        accumulated = 0f
-                    }
+                    val density=resources.displayMetrics.density
+                    val reserved=ShellDimensions.topBarDp(resources.configuration.fontScale)*density
+                    val hideDistance=maxOf(96f*density,reserved+16f*density)
+                    val recallDistance=24f*density
+                    val recall=accumulated>recallDistance
+                    // Deliberate upward travel, plus protection while the main page's
+                    // reserved header space is still visible. Nested scrollers keep working.
+                    val hide=accumulated < -hideDistance && (!mainMoved || scrollY>=reserved)
+                    if(recall || hide) { direction?.invoke(recall);accumulated=0f }
                     changed?.invoke()
                 }
                 lastY = event.y
@@ -84,6 +91,11 @@ data class GlassFrame(val bitmap: Bitmap, val width: Int, val height: Int, val l
 
 /** Fresh, never rewritten bitmaps. Capture only the visible top strip, excluding all native UI. */
 class WebGlassSource {
+    private val frameObservers = linkedSetOf<() -> Unit>()
+    internal fun observeFrames(observer: () -> Unit): () -> Unit {
+        frameObservers.add(observer)
+        return { frameObservers.remove(observer) }
+    }
     var frame by mutableStateOf<GlassFrame?>(null)
         private set
     val version = androidx.compose.runtime.mutableIntStateOf(0)
@@ -153,6 +165,7 @@ class WebGlassSource {
         try { view.draw(canvas) } finally { view.sampling = false }
         frame = GlassFrame(bitmap, width, height, region.left, region.top)
         version.intValue++
+        frameObservers.toList().forEach { it() }
         captures++
         if (BuildConfig.DEBUG && timings.size < 4000) timings.add((SystemClock.elapsedRealtimeNanos() - started) / 1e6 to (SystemClock.elapsedRealtimeNanos() - dirtyAt) / 1e6)
     }
@@ -167,7 +180,7 @@ class WebGlassSource {
         view?.changed = { dirty() }
         view?.beforeHardwareDraw = { captureBeforeHardwareDraw() }
     }
-    fun invalidateFrame() { frame = null; version.intValue++; dirty() }
+    fun invalidateFrame() { frame = null; version.intValue++; frameObservers.toList().forEach { it() }; dirty() }
     /** Activity owns this hard gate; a stale Compose side effect cannot reopen it. */
     fun allow(value: Boolean) { permitted = value; reconcile() }
     fun active(value: Boolean, expanded: Boolean) {

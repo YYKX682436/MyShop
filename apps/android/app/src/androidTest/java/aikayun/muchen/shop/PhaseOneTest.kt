@@ -33,10 +33,10 @@ class PhaseOneTest : InstrumentationTestCase() {
         }
         fail(message)
     }
-    private fun launch(): ShopActivity {
+    private fun launch(target: Class<out ShopActivity> = FixtureActivity::class.java): ShopActivity {
         // MIUI blocks app-originated background starts even for legacy instrumentation.
-        val monitor = instrumentation.addMonitor(FixtureActivity::class.java.name, null, false)
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n ${context.packageName}/${FixtureActivity::class.java.name}").use { descriptor ->
+        val monitor = instrumentation.addMonitor(target.name, null, false)
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n ${context.packageName}/${target.name}").use { descriptor ->
             android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
         }
         val activity = monitor.waitForActivityWithTimeout(5_000) as? ShopActivity
@@ -230,6 +230,54 @@ class PhaseOneTest : InstrumentationTestCase() {
         Thread.sleep(400);nativeClick("更多操作");nativeClick("回到主页")
         waitFor("redirected home visually committed and old history cleared") { visible(activity) && web.url=="https://redirect.fixture.test/landing" && !web.canGoBack() }
         assertEquals("redirect.fixture.test",(ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance).host)
+    }
+
+    fun testLiveMenuFrameEvidence() {
+        val activity=launch(ShopActivity::class.java);submit(activity,"mc.mc520.top")
+        waitFor("live authorized storefront",30_000) { visible(activity) };Thread.sleep(1000)
+        val source=ShopActivity::class.java.getDeclaredField("glassSource").apply { isAccessible=true }.get(activity) as WebGlassSource
+        val output=java.io.File(context.getExternalFilesDir(null),"live-menu").apply { mkdirs() }
+        fun shell(command: String)=instrumentation.uiAutomation.executeShellCommand(command).use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
+        shell("dumpsys gfxinfo ${context.packageName} reset")
+        val intervals=org.json.JSONArray()
+        repeat(4) { index ->
+            val start=System.nanoTime();nativeClick("更多操作")
+            val state=ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+            val deadline=System.currentTimeMillis()+3000
+            while(nativeBounds("切换电脑模式")==null && System.currentTimeMillis()<deadline) Thread.sleep(50)
+            var liveUrl="";ui { liveUrl=activity.findViewById<WebView>(R.id.browser).url.orEmpty() }
+            instrumentation.sendStatus(0,android.os.Bundle().apply { putString("menuState","index=$index menu=${state.menu} ready=${state.ready} gate=${state.gate} desktop=${state.desktop} source=${source.captures} url=$liveUrl") })
+            if(nativeBounds("切换电脑模式")==null) {
+                instrumentation.uiAutomation.takeScreenshot().let { image -> java.io.File(output,"miss.png").outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+                nativeClick("更多操作");Thread.sleep(700)
+            }
+            assertNotNull("live ordinary menu opens",nativeBounds("切换电脑模式"))
+            intervals.put(org.json.JSONObject().put("startNs",start).put("endNs",System.nanoTime()))
+            if(index==3) {
+                java.io.File(output,"gfx.txt").writeBytes(shell("dumpsys gfxinfo ${context.packageName} framestats"))
+                instrumentation.uiAutomation.takeScreenshot().let { image -> java.io.File(output,"menu.png").outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+            }
+            shell("input keyevent 4");Thread.sleep(1000)
+        }
+        java.io.File(output,"source.json").writeText(source.debugMetrics().put("menuIntervals",intervals).toString(2))
+    }
+
+    fun testGentleSwipesKeepHeaderAndCaptionPressesDoNotNavigate() {
+        val activity=launch();submit(activity,"b.fixture.test");waitFor("bind") { visible(activity) };Thread.sleep(600)
+        val state=ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+        val web=activity.findViewById<WebView>(R.id.browser)
+        val loads=FixtureActivity.loads.size
+        nativeClick("商城图标");nativeClick(state.title)
+        assertEquals("caption presses are feedback only",loads,FixtureActivity.loads.size)
+        ui { assertSame(web,activity.findViewById(R.id.browser)) }
+        fun swipe(from: Int,to: Int) { instrumentation.uiAutomation.executeShellCommand("input swipe 600 $from 600 $to 500").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } };Thread.sleep(300) }
+        script(activity,"scrollTo(0,0)");Thread.sleep(200);swipe(500,350)
+        assertTrue("gentle upward swipe near the page top keeps header",state.toolbar)
+        script(activity,"scrollTo(0,document.querySelector('.color').offsetTop+100)");Thread.sleep(200);swipe(1600,1450)
+        assertTrue("gentle upward swipe away from the top also keeps header",state.toolbar)
+        swipe(1900,1250);waitFor("deliberate upward travel hides header") { !state.toolbar }
+        swipe(1000,1350);waitFor("reverse travel recalls header") { state.toolbar }
+        assertEquals(loads,FixtureActivity.loads.size)
     }
 
     fun testOriginAndStrictProtocol() {

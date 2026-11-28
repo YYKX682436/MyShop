@@ -82,9 +82,9 @@ class ShellAppearance {
 fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance, source: WebGlassSource, action: (Int) -> Unit) {
     val dark = appearance.dark ?: isSystemInDarkTheme()
     val toolbarTransition = remember { MutableTransitionState(false) }
-    var menuAlpha by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(appearance.gate) { if(appearance.gate) menuAlpha=0f }
-    val expanded = appearance.menu || menuAlpha > 0f
+    var menuVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(appearance.gate) { if(appearance.gate) menuVisible=false }
+    val expanded = appearance.menu || menuVisible
     toolbarTransition.targetState = !appearance.gate && (appearance.toolbar || expanded)
     val toolbarVisible = toolbarTransition.currentState || toolbarTransition.targetState || !toolbarTransition.isIdle
     val sampling = appearance.samplingAllowed && (toolbarVisible || expanded)
@@ -105,6 +105,8 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
             }
         }}
         val backdrop = rememberLayerBackdrop(onDraw = onDraw)
+        val hostView = androidx.compose.ui.platform.LocalView.current
+        val menuBackdrop = remember(source, hostView) { WebFrameBackdrop(source, hostView) }
         GlasmioBackdropProvider(backdrop) {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(
@@ -132,12 +134,12 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                         val p = it.positionInRoot()
                         source.toolbarBounds(Rect(p.x,p.y,p.x+it.size.width,p.y+it.size.height))
                     }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        NavigationGlass(Modifier.size(toolbarHeight), dark) {
+                        NavigationGlass(Modifier.size(toolbarHeight), dark, onClick={}, elastic=true) {
                             val icon = appearance.icon
                             if (icon != null) Image(icon.asImageBitmap(), "商城图标", Modifier.size(44.dp).clip(CircleShape))
                             else Image(painterResource(R.drawable.ic_shop), "商城图标", Modifier.size(44.dp).clip(CircleShape))
                         }
-                        NavigationGlass(Modifier.weight(1f).fillMaxHeight(), dark) {
+                        NavigationGlass(Modifier.weight(1f).fillMaxHeight(), dark, onClick={}, elastic=true) {
                             Column(Modifier.fillMaxWidth().padding(horizontal=12.dp), horizontalAlignment=Alignment.CenterHorizontally) {
                                 Text(appearance.title, fontSize=17.sp, lineHeight=20.sp, fontWeight=FontWeight.Medium, maxLines=1, overflow=TextOverflow.Ellipsis)
                                 Text(appearance.host, fontSize=12.sp, lineHeight=15.sp, color=LocalContentColor.current.copy(alpha=0.65f), maxLines=1, overflow=TextOverflow.Ellipsis)
@@ -149,14 +151,15 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                             GlasmioMenu(
                                 expanded = appearance.menu,
                                 onExpandedChange = { appearance.menu = it },
-                                itemCount = 7,
+                                itemCount = 7, exportChildBackdrop=false,
+                                backdrop = menuBackdrop,
                                 menuWidth = 224.dp,
                                 // Seven complete 48dp rows, two 9dp separators, library's 10dp edges.
                                 heightOverride = menuHeight,
                                 anchorEnabled = appearance.ready,
                                 menuAnchorState = anchor,
                                 morphFromAnchor = false, keepAnchorVisible = true, fullScreen = false, forceBelowAnchor = true,
-                                onMenuAlphaChanged = { menuAlpha=if(appearance.gate) 0f else it },
+                                onMenuAlphaChanged = { menuVisible = !appearance.gate && it > 0f },
                                 onMenuBoundsChanged = { source.menuBounds(it) },
                                 anchor = { open ->
                                     NavigationGlass(Modifier.size(toolbarHeight).glasmioMenuAnchor(anchor).semantics { contentDescription = "更多操作" }, dark, onClick=open) {
@@ -219,11 +222,11 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
 
 /** Shared material for the three independent surfaces; content opacity remains intact. */
 @Composable
-private fun NavigationGlass(modifier: Modifier, dark: Boolean, onClick: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
+private fun NavigationGlass(modifier: Modifier, dark: Boolean, onClick: (() -> Unit)? = null, elastic: Boolean = false, content: @Composable BoxScope.() -> Unit) {
     GlassSurface(modifier, shape=CircleShape, material=NavigationGlassMaterial.RegularSmall,
         navigationSurfaceColor=(if(dark) Color(0xFF121212) else Color(0xFFFAFAFA)).copy(alpha=0.40f),
         navigationSurfaceAlphaMultiplier=1f, frostRadius=8.dp, refractionHeight=8.dp,
-        refractionAmount=1.5.dp, opticalHighlightBoost=-0.25f, onClick=onClick, content=content)
+        refractionAmount=1.5.dp, opticalHighlightBoost=-0.25f, onClick=onClick, nativeNavigationFlex=elastic, content=content)
 }
 
 /** Google Material Icons Outlined; only these eight vectors are packaged. */
