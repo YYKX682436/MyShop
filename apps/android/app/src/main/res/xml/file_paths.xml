@@ -1,4 +1,0 @@
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <cache-path name="shared_media" path="shared/" />
-    <external-files-path name="capture_media" path="Pictures/capture/" />
-</paths>

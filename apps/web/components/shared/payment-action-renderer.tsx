@@ -9,7 +9,6 @@ import type { TranslationKey } from "@/lib/i18n"
 import { resolvePaymentAction, type PaymentActionEnvironment } from "@/lib/payment-action"
 import { executePaymentAction, isExecutablePaymentAction, type ExecutablePaymentAction } from "@/lib/payment-action-executor"
 import { getPaymentActionEnvironment } from "@/lib/payment-entry"
-import { getNativeApp, isNativePaymentRecovery } from "@/lib/native-app"
 import type { PaymentPageLoadPhase } from "@/lib/payment-page-state"
 import type { PaymentNextAction } from "@/types"
 
@@ -17,7 +16,6 @@ interface PaymentActionRendererProps {
   action: PaymentNextAction | null | undefined
   loadState: PaymentPageLoadPhase
   statusError?: string | null
-  recoveryUrl?: string
   retryAction?: ReactNode
   retryStatusAction?: ReactNode
 }
@@ -52,7 +50,6 @@ export function PaymentActionRenderer({
   action,
   loadState,
   statusError,
-  recoveryUrl,
   retryAction,
   retryStatusAction,
 }: PaymentActionRendererProps) {
@@ -60,7 +57,6 @@ export function PaymentActionRenderer({
   const [environment, setEnvironment] = useState<PaymentActionEnvironment | null>(null)
   const [autoExecutionPending, setAutoExecutionPending] = useState(false)
   const executedRef = useRef<string>("")
-  const nativeApp = getNativeApp()
 
   useEffect(() => {
     setEnvironment(getPaymentActionEnvironment())
@@ -77,25 +73,24 @@ export function PaymentActionRenderer({
     }
   }, [action, environment, waitingForEnvironment])
 
-  const triggerExecution = useCallback(async (executable: ExecutablePaymentAction) => {
+  const triggerExecution = useCallback((executable: ExecutablePaymentAction) => {
     setAutoExecutionPending(true)
     try {
-      await executePaymentAction(executable, { recoveryUrl })
+      executePaymentAction(executable)
     } catch (error) {
       setAutoExecutionPending(false)
       toast.error(error instanceof Error ? error.message : t("common.error"))
       return
     }
     window.setTimeout(() => setAutoExecutionPending(false), EXECUTION_FALLBACK_DELAY)
-  }, [recoveryUrl, t])
+  }, [t])
 
   useEffect(() => {
     if (!decision || !isExecutablePaymentAction(decision)) return
     const signature = JSON.stringify(decision)
     if (executedRef.current === signature) return
     executedRef.current = signature
-    if (isNativePaymentRecovery()) return
-    void triggerExecution(decision)
+    triggerExecution(decision)
   }, [decision, triggerExecution])
 
   const copy = async (value: string) => {
@@ -112,7 +107,7 @@ export function PaymentActionRenderer({
   }
 
   const retryExecution = () => {
-    if (decision && isExecutablePaymentAction(decision)) void triggerExecution(decision)
+    if (decision && isExecutablePaymentAction(decision)) triggerExecution(decision)
   }
 
   if (!action) {
@@ -187,7 +182,7 @@ export function PaymentActionRenderer({
         {autoExecutionPending ? t("payment.openingClient") : t("payment.actionFallback")} · {clientLabel(decision.client, t)}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <a href={decision.url} onClick={nativeApp ? (event) => { event.preventDefault(); retryExecution() } : undefined} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+        <a href={decision.url} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
           {openClientLabel(decision.client, t)} <ExternalLink className="h-3.5 w-3.5" />
         </a>
         <button type="button" onClick={() => void copy(decision.url)} className="inline-flex items-center gap-1.5 rounded-control border border-border-strong px-4 py-2 text-sm font-medium text-foreground">
@@ -211,7 +206,7 @@ export function PaymentActionRenderer({
         {autoExecutionPending ? t("payment.openingClient") : t("payment.actionFallback")} · {clientLabel(decision.client, t)}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <a href={decision.url} onClick={nativeApp ? (event) => { event.preventDefault(); retryExecution() } : undefined} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+        <a href={decision.url} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
           {openClientLabel(decision.client, t)} <ExternalLink className="h-3.5 w-3.5" />
         </a>
         <button type="button" onClick={() => void copy(decision.url)} className="inline-flex items-center gap-1.5 rounded-control border border-border-strong px-4 py-2 text-sm font-medium text-foreground">

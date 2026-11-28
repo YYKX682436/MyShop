@@ -18,7 +18,6 @@ import {
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import { cn, detectPaymentDevice, formatYuan } from "@/lib/utils"
-import { setNativeOverlayOpen } from "@/lib/native-app"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import {
   executePaymentAction,
@@ -145,14 +144,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   )
   const [submitting, setSubmitting] = useState(false)
   const [paymentFallbackAction, setPaymentFallbackAction] = useState<ExecutablePaymentAction | null>(null)
-  const [paymentFallbackRecoveryUrl, setPaymentFallbackRecoveryUrl] = useState<string | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
-
-  useEffect(() => {
-    const owner = "product-purchase-dock"
-    setNativeOverlayOpen(open, owner)
-    return () => setNativeOverlayOpen(false, owner)
-  }, [open])
 
   const attachPanel = useCallback((panel: HTMLDivElement | null) => {
     viewportCleanupRef.current?.()
@@ -235,7 +227,6 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   const resetPanelUiState = () => {
     setCustomerInputErrors({})
     setPaymentFallbackAction(null)
-    setPaymentFallbackRecoveryUrl(null)
   }
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -265,9 +256,11 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
 
   const retryPaymentExecution = () => {
     if (!paymentFallbackAction) return
-    void executePaymentAction(paymentFallbackAction, { recoveryUrl: paymentFallbackRecoveryUrl ?? undefined }).catch(error => {
+    try {
+      executePaymentAction(paymentFallbackAction)
+    } catch (error) {
       toast.error(error instanceof Error ? error.message : t("common.error"))
-    })
+    }
   }
 
   const handleBuyNow = async () => {
@@ -362,9 +355,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       const entry = resolvePaymentEntry(action, getPaymentActionEnvironment())
       if (entry.mode === "execute" && isExecutablePaymentAction(entry.decision)) {
         setPaymentFallbackAction(entry.decision)
-        setPaymentFallbackRecoveryUrl(paymentHref)
         toast.success(t("payment.redirectingToPay"))
-        await executePaymentAction(entry.decision, { recoveryUrl: paymentHref })
+        executePaymentAction(entry.decision)
         return
       }
 

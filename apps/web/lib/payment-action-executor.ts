@@ -1,5 +1,4 @@
 import type { PaymentActionDecision } from "./payment-action.ts"
-import { getNativeApp } from "./native-app.ts"
 
 export type ExecutablePaymentAction =
   | Extract<PaymentActionDecision, { kind: "redirect" | "form_post" }>
@@ -16,22 +15,8 @@ export function isExecutablePaymentAction(
 }
 
 /** Execute an already-resolved provider-neutral browser action. */
-export async function executePaymentAction(
-  action: ExecutablePaymentAction,
-  options: { recoveryUrl?: string } = {},
-): Promise<void> {
+export function executePaymentAction(action: ExecutablePaymentAction): void {
   if (typeof window === "undefined" || typeof document === "undefined") return
-
-  const native = getNativeApp()
-  if (native) {
-    const recoveryUrl = new URL(options.recoveryUrl ?? window.location.href, window.location.href).toString()
-    const acknowledgement = await native.beginPayment({
-      targetUrl: action.url,
-      kind: action.kind,
-      recoveryUrl,
-    })
-    if (!acknowledgement.ok) throw new Error(acknowledgement.error || "App 未能登记支付跳转，请重试")
-  }
 
   if (action.kind === "form_post") {
     const form = document.createElement("form")

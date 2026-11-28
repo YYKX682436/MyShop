@@ -25,6 +25,8 @@ import type { SiteConfigKV, UserNumberConfig } from "@/types"
 import { normalizeAppShellConfig, normalizeAppShellPattern, selectAppShellPattern, type AppShellConfig } from "@/lib/app-shell-config"
 
 type TabKey = "basic" | "notifications" | "user" | "maintenance" | "appShell"
+type AppShellRuleDraft = AppShellConfig["rules"][number] & { rowId: number }
+type AppShellConfigDraft = Omit<AppShellConfig, "rules"> & { rules: AppShellRuleDraft[] }
 
 export default function AdminSiteConfigPage() {
   const { t, locale } = useLocale()
@@ -37,7 +39,7 @@ export default function AdminSiteConfigPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [appShellConfig, setAppShellConfig] = useState<AppShellConfig>({ enabled: false, rules: [] })
+  const [appShellConfig, setAppShellConfig] = useState<AppShellConfigDraft>({ enabled: false, rules: [] })
   const [appShellLoading, setAppShellLoading] = useState(false)
   const [appShellError, setAppShellError] = useState(false)
   const [appShellSaving, setAppShellSaving] = useState(false)
@@ -56,6 +58,7 @@ export default function AdminSiteConfigPage() {
   const settingsVersion = useRef(0)
   const numberVersion = useRef(0)
   const appShellVersionRef = useRef(0)
+  const appShellRuleRowId = useRef(0)
   const startRequest = useRequestGuard()
   const canManageAppShell = user?.role === "SUPER_ADMIN" && isMainSite
 
@@ -103,7 +106,10 @@ export default function AdminSiteConfigPage() {
     } else setUserNumberError(true)
     if (canManageAppShell) {
       if (appShell.status === "fulfilled" && appShell.value && appShellVersion === appShellVersionRef.current) {
-        setAppShellConfig(appShell.value)
+        setAppShellConfig({
+          ...appShell.value,
+          rules: appShell.value.rules.map((rule) => ({ ...rule, rowId: ++appShellRuleRowId.current })),
+        })
         setAppShellDirty(false)
       } else setAppShellError(true)
       setAppShellLoading(false)
@@ -126,7 +132,7 @@ export default function AdminSiteConfigPage() {
     setSettingsDirty(true)
     setConfigMap((current) => ({ ...current, [key]: value }))
   }
-  const updateAppShell = (update: (current: AppShellConfig) => AppShellConfig) => {
+  const updateAppShell = (update: (current: AppShellConfigDraft) => AppShellConfigDraft) => {
     appShellVersionRef.current += 1
     setAppShellDirty(true)
     setAppShellConfig(update)
@@ -134,7 +140,15 @@ export default function AdminSiteConfigPage() {
   const saveAppShell = async () => {
     let normalized: AppShellConfig
     try {
-      normalized = normalizeAppShellConfig(appShellConfig)
+      normalized = normalizeAppShellConfig({
+        enabled: appShellConfig.enabled,
+        rules: appShellConfig.rules.map(({ domain_pattern, site_type, enabled, note }) => ({
+          domain_pattern,
+          site_type,
+          enabled,
+          note,
+        })),
+      })
     } catch {
       toast.error(t("admin.appShellRuleInvalid"))
       return
@@ -144,7 +158,13 @@ export default function AdminSiteConfigPage() {
     try {
       const saved = await requestOrThrow(() => adminConfigApi.updateAppShell(normalized))
       if (version === appShellVersionRef.current) {
-        setAppShellConfig(saved)
+        setAppShellConfig({
+          ...saved,
+          rules: saved.rules.map((rule, index) => ({
+            ...rule,
+            rowId: appShellConfig.rules[index]?.rowId ?? ++appShellRuleRowId.current,
+          })),
+        })
         setAppShellDirty(false)
       }
       toast.success(t("admin.appShellSaved"))
@@ -156,9 +176,9 @@ export default function AdminSiteConfigPage() {
   }
   const addAppShellRule = () => updateAppShell((current) => ({
     ...current,
-    rules: [...current.rules, { domain_pattern: "", site_type: "EXTERNAL", enabled: true, note: "" }],
+    rules: [...current.rules, { domain_pattern: "", site_type: "EXTERNAL", enabled: true, note: "", rowId: ++appShellRuleRowId.current }],
   }))
-  const updateAppShellRule = (index: number, patch: Partial<AppShellConfig["rules"][number]>) => updateAppShell((current) => ({
+  const updateAppShellRule = (index: number, patch: Partial<AppShellRuleDraft>) => updateAppShell((current) => ({
     ...current,
     rules: current.rules.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...patch } : rule),
   }))
@@ -411,7 +431,7 @@ export default function AdminSiteConfigPage() {
                 </div>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">{t("admin.appShellDomain")}</h3><Button type="button" variant="outline" size="sm" onClick={addAppShellRule} disabled={appShellSaving || refreshing}><Plus className="size-4" aria-hidden="true" />{t("admin.appShellAddRule")}</Button></div>
-                  {appShellConfig.rules.map((rule, index) => <div key={`${index}:${rule.domain_pattern}`} className="grid gap-3 rounded-card border border-border-subtle bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_170px_auto]">
+                  {appShellConfig.rules.map((rule, index) => <div key={rule.rowId} className="grid gap-3 rounded-card border border-border-subtle bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_170px_auto]">
                     <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium"><span>{t("admin.appShellDomain")}</span><Input value={rule.domain_pattern} placeholder={t("admin.appShellRulePlaceholder")} maxLength={260} onChange={(event) => updateAppShellRule(index, { domain_pattern: event.target.value })} disabled={appShellSaving || refreshing} /></label>
                     <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.appShellType")}</span><select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={rule.site_type} onChange={(event) => updateAppShellRule(index, { site_type: event.target.value as "MYSHOP" | "EXTERNAL" })} disabled={appShellSaving || refreshing}><option value="MYSHOP">{t("admin.appShellMyShop")}</option><option value="EXTERNAL">{t("admin.appShellExternal")}</option></select></label>
                     <div className="flex items-end justify-between gap-2 sm:justify-end"><label className="flex h-10 items-center gap-2 text-sm"><Switch checked={rule.enabled} onCheckedChange={(enabled) => updateAppShellRule(index, { enabled })} disabled={appShellSaving || refreshing} aria-label={`${t("admin.appShellRuleEnabled")}: ${rule.domain_pattern || index + 1}`} /><span>{t("admin.appShellRuleEnabled")}</span></label><Button type="button" variant="ghost" size="icon" aria-label={t("admin.appShellDeleteRule")} onClick={() => removeAppShellRule(index)} disabled={appShellSaving || refreshing}><Trash2 className="size-4" aria-hidden="true" /></Button></div>

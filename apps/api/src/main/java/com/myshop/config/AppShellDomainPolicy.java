@@ -95,6 +95,7 @@ public final class AppShellDomainPolicy {
     private static boolean validHostname(String host) {
         if (host.length() > 253 || host.isEmpty() || host.equals("localhost") || host.endsWith(".localhost")) return false;
         String[] labels = host.split("\\.", -1);
+        if (labels.length < 2) return false;
         for (String label : labels) {
             if (label.isEmpty() || label.length() > 63 || !label.matches("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")) return false;
         }

@@ -16,7 +16,7 @@ class AppShellDomainPolicyTest {
     @Test void rejectsUnsafeOriginShapes() {
         for (String value : new String[]{"http://mc.mc520.top", "https://user@mc.mc520.top",
                 "https://mc520.top@evil.com", "https://mc.mc520.top:444", "https://127.0.0.1",
-                "https://[::1]", "https://localhost", "https://mc.mc520.top/path", "https://mc\\.mc520.top"}) {
+                "https://[::1]", "https://localhost", "https://printer", "https://mc.mc520.top/path", "https://mc\\.mc520.top"}) {
             assertNull(AppShellDomainPolicy.parseOrigin(value), value);
         }
     }
