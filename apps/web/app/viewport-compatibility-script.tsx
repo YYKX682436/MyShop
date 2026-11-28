@@ -26,6 +26,10 @@ const SCRIPT = String.raw`
         const width = Number(window.visualViewport?.width || window.innerWidth || state.containerWidthDp)
         const gap = Number((state.topBarDp * width / state.containerWidthDp).toFixed(3)) + "px"
         if (root.style.getPropertyValue("--aikayun-topbar-gap") !== gap) root.style.setProperty("--aikayun-topbar-gap", gap)
+        // WebView's CSS env remains in dp-sized CSS pixels when the desktop page is
+        // zoomed out. Scale the existing bottom safe area, while drawing behind it.
+        const ratio = String(state.desktop ? width / state.containerWidthDp : 1)
+        if (root.style.getPropertyValue("--aikayun-viewport-ratio") !== ratio) root.style.setProperty("--aikayun-viewport-ratio", ratio)
         const content = state.desktop
           ? "width=1280, initial-scale=" + Math.min(1, state.containerWidthDp / 1280) + ", viewport-fit=cover"
           : "width=device-width, initial-scale=1, viewport-fit=cover"
@@ -37,6 +41,7 @@ const SCRIPT = String.raw`
       }
       delete root.dataset.aikayunShell
       root.style.removeProperty("--aikayun-topbar-gap")
+      root.style.removeProperty("--aikayun-viewport-ratio")
       const viewports = Array.from(document.querySelectorAll('meta[name="viewport"]'))
       const screenWidth = Number(window.screen?.width || 0)
       const wide = viewports

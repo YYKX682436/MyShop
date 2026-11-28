@@ -50,7 +50,7 @@ class AppDisplay(private val view: WebView, private val origin: String, private 
     }
 
     private fun state(): String = JSONObject().put("version", 1).put("origin", wireOrigin)
-        .put("desktop", desktop).put("topBarDp", 68)
+        .put("desktop", desktop).put("topBarDp", ShellDimensions.topBarDp(view.resources.configuration.fontScale).toDouble())
         .put("containerWidthDp", (if (view.width > 0) view.width / view.resources.displayMetrics.density else view.resources.configuration.screenWidthDp.toFloat()).coerceAtLeast(1f).toDouble()).toString()
 
     private fun javascript(): String = """

@@ -10,13 +10,18 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -64,6 +69,8 @@ class ShellAppearance {
     var toolbar by mutableStateOf(true)
     var menu by mutableStateOf(false)
     var title by mutableStateOf("艾卡云")
+    var host by mutableStateOf("")
+    var samplingAllowed by mutableStateOf(false)
     var icon by mutableStateOf<android.graphics.Bitmap?>(null)
     var desktop by mutableStateOf(false)
     var external by mutableStateOf(false)
@@ -74,9 +81,22 @@ class ShellAppearance {
 @Composable
 fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance, source: WebGlassSource, action: (Int) -> Unit) {
     val dark = appearance.dark ?: isSystemInDarkTheme()
-    val expanded = appearance.menu
-    val sampling = !appearance.gate && appearance.ready && (appearance.toolbar || expanded)
+    val toolbarTransition = remember { MutableTransitionState(false) }
+    var menuAlpha by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(appearance.gate) { if(appearance.gate) menuAlpha=0f }
+    val expanded = appearance.menu || menuAlpha > 0f
+    toolbarTransition.targetState = !appearance.gate && (appearance.toolbar || expanded)
+    val toolbarVisible = toolbarTransition.currentState || toolbarTransition.targetState || !toolbarTransition.isIdle
+    val sampling = appearance.samplingAllowed && (toolbarVisible || expanded)
     SideEffect { source.active(sampling, expanded) }
+    val toolbarHeight = ShellDimensions.toolbarDp(LocalConfiguration.current.fontScale).dp
+    val density = LocalDensity.current
+    val windowHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
+    val safe = WindowInsets.safeDrawing
+    // The library clamps against the whole viewport; reserve the anchor's space too,
+    // so short windows scroll the rows instead of moving the menu over its trigger.
+    val menuHeight = minOf((7*48+2*9+2*10).dp,
+        windowHeight - with(density) { (safe.getTop(density)+safe.getBottom(density)).toDp() } - toolbarHeight - 16.dp).coerceAtLeast(1.dp)
     GlasmioTheme(isDark = dark) {
         // The custom capture records WebView pixels, while AndroidView draws its hardware content.
         val onDraw: ContentDrawScope.() -> Unit = remember(source) {{
@@ -103,36 +123,53 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                     },
                 )
                 AnimatedVisibility(
-                    visible = !appearance.gate && (appearance.toolbar || appearance.menu),
+                    visibleState = toolbarTransition,
                     modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets.displayCutout)).padding(horizontal = 12.dp, vertical = 8.dp),
                     enter = fadeIn(tween(180)) + slideInVertically(tween(180)) { -it },
                     exit = fadeOut(tween(180)) + slideOutVertically(tween(180)) { -it },
                 ) {
-                    GlassSurface(Modifier.fillMaxWidth().height(52.dp), shape = CircleShape, material = NavigationGlassMaterial.RegularSmall) {
-                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                                val icon = appearance.icon
-                                if (icon != null) Image(icon.asImageBitmap(), "商城图标", Modifier.size(30.dp).clip(CircleShape))
-                                else Image(painterResource(R.drawable.ic_shop), "商城图标", Modifier.size(30.dp))
+                    Row(Modifier.fillMaxWidth().height(toolbarHeight).onGloballyPositioned {
+                        val p = it.positionInRoot()
+                        source.toolbarBounds(Rect(p.x,p.y,p.x+it.size.width,p.y+it.size.height))
+                    }, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        NavigationGlass(Modifier.size(toolbarHeight), dark) {
+                            val icon = appearance.icon
+                            if (icon != null) Image(icon.asImageBitmap(), "商城图标", Modifier.size(44.dp).clip(CircleShape))
+                            else Image(painterResource(R.drawable.ic_shop), "商城图标", Modifier.size(44.dp).clip(CircleShape))
+                        }
+                        NavigationGlass(Modifier.weight(1f).fillMaxHeight(), dark) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal=12.dp), horizontalAlignment=Alignment.CenterHorizontally) {
+                                Text(appearance.title, fontSize=17.sp, lineHeight=20.sp, fontWeight=FontWeight.Medium, maxLines=1, overflow=TextOverflow.Ellipsis)
+                                Text(appearance.host, fontSize=12.sp, lineHeight=15.sp, color=LocalContentColor.current.copy(alpha=0.65f), maxLines=1, overflow=TextOverflow.Ellipsis)
                             }
-                            Text(appearance.title, Modifier.weight(1f), textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            val anchor = rememberGlasmioMenuAnchorState()
+                        }
+                        val anchor = rememberGlasmioMenuAnchorState()
+                        val typography = MaterialTheme.typography
+                        MaterialTheme(typography=typography.copy(bodyLarge=typography.bodyLarge.copy(fontSize=16.sp,lineHeight=22.sp))) {
                             GlasmioMenu(
                                 expanded = appearance.menu,
                                 onExpandedChange = { appearance.menu = it },
-                                itemCount = 7, heightOverride = 356.dp, anchorEnabled = appearance.ready, menuAnchorState = anchor, forceBelowAnchor = true,
+                                itemCount = 7,
+                                menuWidth = 224.dp,
+                                // Seven complete 48dp rows, two 9dp separators, library's 10dp edges.
+                                heightOverride = menuHeight,
+                                anchorEnabled = appearance.ready,
+                                menuAnchorState = anchor,
+                                morphFromAnchor = false, keepAnchorVisible = true, fullScreen = false, forceBelowAnchor = true,
+                                onMenuAlphaChanged = { menuAlpha=if(appearance.gate) 0f else it },
+                                onMenuBoundsChanged = { source.menuBounds(it) },
                                 anchor = { open ->
-                                    GlasmioIconButton(onClick = open, sampleBackdrop = false, navigationSurfaceColor = Color.Transparent, modifier = Modifier.size(52.dp).glasmioMenuAnchor(anchor).semantics { contentDescription = "更多操作" }, size = 48.dp) {
+                                    NavigationGlass(Modifier.size(toolbarHeight).glasmioMenuAnchor(anchor).semantics { contentDescription = "更多操作" }, dark, onClick=open) {
                                         val color = LocalContentColor.current
-                                        Canvas(Modifier.size(24.dp)) { for (i in 1..3) drawCircle(color, radius = 1.6.dp.toPx(), center = Offset(size.width * i/4, size.height/2)) }
+                                        Canvas(Modifier.size(24.dp)) { for (i in 1..3) drawCircle(color, radius=1.6.dp.toPx(), center=Offset(size.width*i/4,size.height/2)) }
                                     }
                                 },
                             ) { _, close ->
-                                listOf("返回", "刷新", "回到主页", "分享当前网页", "在浏览器打开", "复制当前网址", "电脑模式").forEachIndexed { index, title ->
-                                    GlasmioMenuItem(title = title, enabled = index != 0 || appearance.canBack,
-                                        rowHeight = 48.dp, icon = { ActionIcon(index) },
-                                        trailing = if (index == 6) {{ Text(if (appearance.desktop) "已开启" else "关闭") }} else null,
-                                        onClick = { if (appearance.menu) { action(index); close() } })
+                                listOf("返回", "刷新", "回到主页", "分享当前网页", "在浏览器打开", "复制当前网址", if(appearance.desktop) "切换手机模式" else "切换电脑模式").forEachIndexed { index, title ->
+                                    if(index==3 || index==6) HorizontalDivider(Modifier.padding(horizontal=16.dp,vertical=4.dp),thickness=1.dp,color=LocalContentColor.current.copy(alpha=0.12f))
+                                    GlasmioMenuItem(title=title, enabled=index!=0 || appearance.canBack, rowHeight=48.dp,
+                                        icon={ ActionIcon(index, appearance.desktop) },
+                                        onClick={ if(appearance.menu) { action(index);close() } })
                                 }
                             }
                         }
@@ -178,27 +215,29 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
 }
 
 
-/** Original vectors; no sample/Apple icon artwork. */
+/** Shared material for the three independent surfaces; content opacity remains intact. */
 @Composable
-private fun ActionIcon(index: Int) {
-    val color = LocalContentColor.current
-    Canvas(Modifier.size(20.dp)) {
-        scale(size.width / 24f, size.height / 24f, Offset.Zero) {
-            val stroke = Stroke(1.8f)
-            fun line(x: Float, y: Float, xx: Float, yy: Float) = drawLine(color, Offset(x,y),Offset(xx,yy),1.8f)
-            when (index) {
-                0 -> { line(15f,4f,7f,12f);line(7f,12f,15f,20f) }
-                1 -> { drawArc(color,45f,290f,false,Offset(4f,4f),Size(16f,16f),style=stroke);line(20f,3f,20f,9f);line(20f,9f,14f,9f) }
-                2 -> { drawPath(Path().apply { moveTo(3f,11f);lineTo(12f,3f);lineTo(21f,11f);lineTo(21f,21f);lineTo(3f,21f);close() },color,style=stroke) }
-                3 -> { line(7f,12f,18f,5f);line(7f,12f,18f,19f);for ((x,y) in listOf(5f to 12f,19f to 4f,19f to 20f)) drawCircle(color,2.5f,Offset(x,y),style=stroke) }
-                4 -> { drawRect(color,Offset(3f,7f),Size(14f,14f),style=stroke);line(10f,14f,21f,3f);line(14f,3f,21f,3f);line(21f,3f,21f,10f) }
-                5 -> { drawRect(color,Offset(7f,7f),Size(14f,14f),style=stroke);line(3f,17f,3f,3f);line(3f,3f,17f,3f) }
-                6 -> { drawRect(color,Offset(2f,3f),Size(20f,14f),style=stroke);line(12f,17f,12f,21f);line(7f,21f,17f,21f) }
-            }
-        }
-    }
+private fun NavigationGlass(modifier: Modifier, dark: Boolean, onClick: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
+    GlassSurface(modifier, shape=CircleShape, material=NavigationGlassMaterial.RegularSmall,
+        navigationSurfaceColor=(if(dark) Color(0xFF121212) else Color(0xFFFAFAFA)).copy(alpha=0.40f),
+        navigationSurfaceAlphaMultiplier=1f, frostRadius=8.dp, refractionHeight=8.dp,
+        refractionAmount=1.5.dp, opticalHighlightBoost=-0.25f, onClick=onClick, content=content)
 }
 
+/** Google Material Icons Outlined; only these eight vectors are packaged. */
+@Composable
+private fun ActionIcon(index: Int, desktop: Boolean) {
+    val resource=when(index) {
+        0 -> R.drawable.ic_action_arrow_back
+        1 -> R.drawable.ic_action_refresh
+        2 -> R.drawable.ic_action_home
+        3 -> R.drawable.ic_action_share
+        4 -> R.drawable.ic_action_open_in_new
+        5 -> R.drawable.ic_action_content_copy
+        else -> if(desktop) R.drawable.ic_action_smartphone else R.drawable.ic_action_desktop_windows
+    }
+    Icon(painterResource(resource),null,Modifier.size(20.dp),tint=LocalContentColor.current)
+}
 
 /** Modify insets on the parent so WebView retains its own internal insets listener. */
 private class WebViewHost(context: android.content.Context) : android.widget.FrameLayout(context) {
@@ -209,15 +248,21 @@ private class WebViewHost(context: android.content.Context) : android.widget.Fra
             val types = android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
             val safe = if (nativeSafe) insets.getInsets(types) else android.graphics.Insets.NONE
             (getChildAt(0)?.layoutParams as? LayoutParams)?.let { params ->
-                val top = safe.top + if (reserveToolbar) (68 * resources.displayMetrics.density).toInt() else 0
-                if (params.leftMargin != safe.left || params.topMargin != top || params.rightMargin != safe.right || params.bottomMargin != safe.bottom) {
-                    params.setMargins(safe.left, top, safe.right, safe.bottom)
+                val bottom = if(reserveToolbar) safe.bottom else 0
+                val top = safe.top + if (reserveToolbar) (ShellDimensions.topBarDp(resources.configuration.fontScale) * resources.displayMetrics.density).toInt() else 0
+                if (params.leftMargin != safe.left || params.topMargin != top || params.rightMargin != safe.right || params.bottomMargin != bottom) {
+                    params.setMargins(safe.left, top, safe.right, bottom)
                     getChildAt(0).layoutParams = params
                 }
             }
             // Phone MyShop uses CSS env. Scaled desktop WebView needs physical margins;
-            // already handled system edges are zero, while IME still reaches WebView.
-            val remaining = if (nativeSafe) android.view.WindowInsets.Builder(insets).setInsets(types, android.graphics.Insets.NONE).build() else insets
+            // handled top/side edges are zero; MyShop keeps bottom CSS safe area and IME.
+            val remaining = if (nativeSafe) android.view.WindowInsets.Builder(insets).apply {
+                for (type in listOf(android.view.WindowInsets.Type.statusBars(),android.view.WindowInsets.Type.navigationBars(),android.view.WindowInsets.Type.displayCutout())) {
+                    val edge = insets.getInsets(type)
+                    setInsets(type, android.graphics.Insets.of(0,0,0,if(reserveToolbar) 0 else edge.bottom))
+                }
+            }.build() else insets
             onApplyWindowInsets(remaining)
         }
     }

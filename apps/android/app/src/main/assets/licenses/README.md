@@ -4,4 +4,6 @@
 - AndroidX Compose/Activity/WebKit and Material: Google and contributors, Apache-2.0.
 - AndroidSVG 1.4 (`com.caverock:androidsvg-aar`): Paul LeBeau and contributors, Apache-2.0, https://github.com/BigBadaboom/androidsvg . It decodes bounded HTTPS site SVG icons; no external resolver is registered.
 
-App branding and action vectors are original project resources, with system fonts. No sample wallpapers, Apple fonts, or SF Symbol art is copied. Release shrinking removes the unused Tapback and listening assets mentioned in the complete upstream notice. Notices are also packaged in the app assets.
+- Google Material Icons Outlined: arrow_back, refresh, home, share, open_in_new, content_copy, desktop_windows, smartphone. Google and contributors, Apache-2.0; eight VectorDrawables from https://github.com/google/material-design-icons . See [license](Material-Icons-LICENSE.txt).
+
+App branding vectors are original project resources, with system fonts. No sample wallpapers, Apple fonts, or SF Symbol art is copied. Release shrinking removes the unused Tapback and listening assets mentioned in the complete upstream notice. Notices are also packaged in the app assets.

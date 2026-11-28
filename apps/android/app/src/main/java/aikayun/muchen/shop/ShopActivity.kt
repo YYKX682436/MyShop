@@ -133,6 +133,7 @@ open class ShopActivity : ComponentActivity() {
 
     override fun onStop() {
         foreground = false
+        homeClearPending = false; homeDocument = -1L
         invalidateRequest()
         authorized = false
         if (bound == null) {
@@ -265,7 +266,7 @@ open class ShopActivity : ComponentActivity() {
         browser.webChromeClient = object : WebChromeClient() {
             override fun onReceivedIcon(view: WebView, icon: android.graphics.Bitmap) {
                 if (web === view && authorized && OriginPolicy.normalize(view.url ?: "") == origin && view.url == origin && activeBrand?.iconUrl.isNullOrBlank()) {
-                    appearance.icon = android.graphics.Bitmap.createScaledBitmap(icon,96,96,true)
+                    appearance.icon = android.graphics.Bitmap.createScaledBitmap(icon,192,192,true)
                     cacheBrand(origin)
                 }
             }
@@ -309,6 +310,7 @@ open class ShopActivity : ComponentActivity() {
                 if (live(view)) {
                     appearance.toolbar = true
                     appearance.menu = false
+                    updateHost(view, url, token, origin)
                     appearance.canBack = view.canGoBack()
                     if (authorized && pageReady) refreshDocumentAppearance(view, token, origin, documentId)
                 }
@@ -318,6 +320,7 @@ open class ShopActivity : ComponentActivity() {
                 if (!request.isForMainFrame) return false
                 if (!live(view) || !authorized || !foreground) return true
                 val target = request.url.toString()
+                if (homeClearPending && (request.hasGesture() || request.method != "GET")) { homeClearPending=false;homeDocument=-1L }
                 if (OriginPolicy.normalize(target) == origin) return false
                 if (bound == null) {
                     failPage("首页跳转到其他网址，请修改后重试", origin)
@@ -337,16 +340,18 @@ open class ShopActivity : ComponentActivity() {
                     return
                 }
                 documentId++
+                updateHost(view, url, token, origin)
                 glassSource.invalidateFrame()
                 appearance.toolbar = true
                 appearance.menu = false
                 mainMethod = mainRequests[url.substringBefore('#')] ?: "UNKNOWN"
-                if (homeClearPending && url == origin) { homeDocument = documentId; homeClearPending = false; homeMetadataPending = true }
+                if (homeClearPending) { homeDocument = documentId; homeMetadataPending = true }
                 documentUrl = url
                 committed = false
                 finished = false
                 pageReady = false
                 appearance.ready = false
+                updateSampling()
                 // First binding has one deadline across redirects, rather than a fresh budget per hop.
                 if (bound != null) scheduleTimeout(token, url)
             }
@@ -419,9 +424,9 @@ open class ShopActivity : ComponentActivity() {
                     candidate = null
                     cacheBrand(origin)
                 }
-                if (homeDocument == navigation && view.url == origin && foreground && authorized) {
+                if (homeClearPending && homeDocument == navigation && OriginPolicy.normalize(view.url ?: "") == origin && foreground && authorized) {
                     view.clearHistory()
-                    homeDocument = -1L
+                    homeClearPending = false; homeDocument = -1L
                 }
                 if (foreground && authorized) {
                     retryUrl = null
@@ -451,6 +456,8 @@ open class ShopActivity : ComponentActivity() {
     }
 
     private fun destroyWeb() {
+        appearance.samplingAllowed=false
+        glassSource.allow(false)
         appearanceCheck?.let(handler::removeCallbacks); appearanceCheck = null
         display?.close(); display = null
         homeClearPending = false; homeDocument = -1L
@@ -500,13 +507,18 @@ open class ShopActivity : ComponentActivity() {
         updateSampling()
     }
 
-    private fun updateSampling() { glassSource.active(foreground && authorized && appearance.ready && !appearance.gate && (appearance.toolbar || appearance.menu), appearance.menu) }
+    private fun updateSampling() {
+        val allowed = foreground && authorized && appearance.ready && !appearance.gate
+        appearance.samplingAllowed = allowed
+        glassSource.allow(allowed)
+    }
 
     private fun menuAction(index: Int) {
         appearance.menu = false
         if (!foreground || !authorized || appearance.gate || !pageReady) return
         val browser = web ?: return
         val url = browser.url?.takeIf { OriginPolicy.normalize(it) == bound } ?: return
+        if(index==0 || index==1 || index==6) { homeClearPending=false;homeDocument=-1L }
         when (index) {
             0 -> if (browser.canGoBack()) browser.goBack()
             1 -> if (mainMethod == "GET") browser.reload() else formNotice()
@@ -527,7 +539,7 @@ open class ShopActivity : ComponentActivity() {
             6 -> {
                 if (mainMethod != "GET" || browser.progress < 100) { formNotice(); return }
                 appearance.ready = false
-                glassSource.active(false, false)
+                updateSampling()
                 appearance.desktop = !appearance.desktop
                 bound?.let { preferences.edit().putBoolean("desktop:$it", appearance.desktop).apply() }
                 display?.configure(appearance.desktop)
@@ -543,6 +555,7 @@ open class ShopActivity : ComponentActivity() {
         brandGeneration++
         brandOrigin = origin
         val cached = origin?.let(brands::cached)
+        appearance.host = origin?.let { Uri.parse(it).host }.orEmpty()
         appearance.title = cached?.first ?: origin?.let { Uri.parse(it).host } ?: "艾卡云"
         appearance.icon = cached?.second
         appearance.bound = bound != null
@@ -558,6 +571,12 @@ open class ShopActivity : ComponentActivity() {
     private fun cacheBrand(origin: String) {
         if (authorized && bound == origin && preferences.getString("origin", null) == origin && brandOrigin == origin) {
             brands.save(origin, appearance.title, appearance.icon)
+        }
+    }
+
+    private fun updateHost(view: WebView, url: String, token: Long, origin: String) {
+        if (token == viewId && web === view && authorized && OriginPolicy.normalize(url) == origin) {
+            appearance.host = Uri.parse(url).host.orEmpty()
         }
     }
 

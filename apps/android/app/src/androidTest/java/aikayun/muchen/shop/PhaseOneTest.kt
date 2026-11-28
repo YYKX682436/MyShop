@@ -42,7 +42,13 @@ class PhaseOneTest : InstrumentationTestCase() {
         val activity = monitor.waitForActivityWithTimeout(5_000) as? ShopActivity
         instrumentation.removeMonitor(monitor)
         checkNotNull(activity) { "Fixture Activity did not start" }
-        return activity.also { current = it }
+        current = activity
+        ui { activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        waitFor("isolated portrait test surface") {
+            activity.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT &&
+                activity.window.decorView.width in 1 until activity.window.decorView.height
+        }
+        return activity
     }
     private fun binding() = context.getSharedPreferences("binding", Context.MODE_PRIVATE).getString("origin", null)
     private fun submit(activity: ShopActivity, text: String) = ui {
@@ -51,6 +57,30 @@ class PhaseOneTest : InstrumentationTestCase() {
     }
     private fun visible(activity: Activity) = activity.findViewById<WebView>(R.id.browser)?.visibility == View.VISIBLE
     private fun status(activity: Activity) = activity.findViewById<TextView>(R.id.status)?.text?.toString() ?: ""
+    private fun nativeBounds(label: String): android.graphics.Rect? {
+        fun find(node: android.view.accessibility.AccessibilityNodeInfo?): android.graphics.Rect? {
+            if(node==null) return null
+            if(node.isVisibleToUser && (node.text?.toString()==label || node.contentDescription?.toString()==label)) {
+                val rect=android.graphics.Rect();node.getBoundsInScreen(rect)
+                if(!rect.isEmpty) return rect
+            }
+            for(i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
+            return null
+        }
+        find(instrumentation.uiAutomation.rootInActiveWindow)?.let { return it }
+        for(window in instrumentation.uiAutomation.windows) find(window.root)?.let { return it }
+        return null
+    }
+    private fun nativeClick(label: String) {
+        val end=System.currentTimeMillis()+5000
+        var rect: android.graphics.Rect?=null
+        while(rect==null && System.currentTimeMillis()<end) { rect=nativeBounds(label);if(rect==null) Thread.sleep(50) }
+        val point=checkNotNull(rect) { "Native control missing: $label" }
+        val time=android.os.SystemClock.uptimeMillis()
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time,0,point.exactCenterX(),point.exactCenterY(),0))
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time+40,1,point.exactCenterX(),point.exactCenterY(),0))
+        Thread.sleep(550)
+    }
     private fun script(activity: Activity, js: String): String {
         val latch = CountDownLatch(1)
         var result = ""
@@ -61,6 +91,7 @@ class PhaseOneTest : InstrumentationTestCase() {
     override fun setUp() {
         super.setUp()
         instrumentation.uiAutomation
+        instrumentation.uiAutomation.serviceInfo=instrumentation.uiAutomation.serviceInfo.apply { flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
         FixtureActivity.reset()
         context.getSharedPreferences("binding", Context.MODE_PRIVATE).edit().clear().commit()
     }
@@ -71,6 +102,113 @@ class PhaseOneTest : InstrumentationTestCase() {
         current = null
         super.tearDown()
     }
+    fun testReworkSamplingAndInsetsEvidence() {
+        val activity = launch()
+        submit(activity, "b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        Thread.sleep(700)
+        val source = ShopActivity::class.java.getDeclaredField("glassSource").apply { isAccessible=true }.get(activity) as WebGlassSource
+        val state = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+        val label = source.debugMetrics().getString("strategy")
+        val output = java.io.File(context.getExternalFilesDir(null), "rework-$label").apply { mkdirs() }
+        fun screenshot(name: String) { instrumentation.uiAutomation.takeScreenshot().let { b -> java.io.File(output,"$name.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } } }
+        fun swipe(from: Int, to: Int) { instrumentation.uiAutomation.executeShellCommand("input swipe 600 $from 600 $to 500").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { s -> s.readBytes() } }; Thread.sleep(250) }
+        script(activity,"scrollTo(0,document.querySelector('.color').offsetTop)")
+        repeat(3) { swipe(1700,900); swipe(900,1700) }
+        script(activity,"window.probeDone=false;let n=0;function step(){scrollTo(0,800+Math.sin(n/14)*500);if(++n<120)requestAnimationFrame(step);else window.probeDone=true}step()")
+        val end = System.currentTimeMillis()+12_000
+        while(script(activity,"window.probeDone")!="true" && System.currentTimeMillis()<end) Thread.sleep(100)
+        assertEquals("true",script(activity,"window.probeDone"))
+        ui { state.menu=true }
+        Thread.sleep(800); screenshot("menu")
+        ui { state.menu=false }
+        Thread.sleep(600)
+        val count=source.captures;Thread.sleep(1000);val still=source.captures-count
+        assertTrue("no idle capture loop",still<=1)
+        val result=source.debugMetrics().put("idleExtraCaptures",still)
+        val layers=org.json.JSONArray()
+        for (desktop in listOf(false,true)) {
+            if(state.desktop!=desktop) { action(activity,6);waitFor("mode document ready") { state.ready };Thread.sleep(700) }
+            script(activity,"document.documentElement.style.background='#13a7c4';document.body.style.cssText='margin:0;background:#13a7c4;min-height:350vh';document.body.innerHTML='<input id=probe style=\"position:fixed;top:40%;left:20%;font-size:24px\"><button style=\"position:fixed;bottom:calc(env(safe-area-inset-bottom)*var(--aikayun-viewport-ratio,1));left:0;background:#ff3366\">Bottom control</button>';scrollTo(0,0)")
+            Thread.sleep(500)
+            val viewport=org.json.JSONObject(script(activity,"(()=>{const b=document.querySelector('button'),r=b.getBoundingClientRect();return {clientWidth:document.documentElement.clientWidth,width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,bottom:getComputedStyle(b).bottom,button:{top:r.top,bottom:r.bottom}}})()"))
+            ui {
+                val web=activity.findViewById<ObservedWebView>(R.id.browser)
+                val pos=IntArray(2);web.getLocationOnScreen(pos)
+                val root=activity.window.decorView
+                layers.put(org.json.JSONObject().put("desktop",desktop).put("density",activity.resources.displayMetrics.density.toDouble()).put("root", "${root.width}x${root.height}").put("web", "${pos[0]},${pos[1]} ${web.width}x${web.height}").put("insets",root.rootWindowInsets.toString()).put("viewport",viewport).put("forwardedInsets",web.debugInsets).put("navColor",activity.window.navigationBarColor).put("contrast",activity.window.isNavigationBarContrastEnforced).put("flags",activity.window.attributes.flags))
+                // Diagnostic software pixels use the same before-hardware-draw ordering.
+                val original=web.beforeHardwareDraw
+                web.beforeHardwareDraw={
+                    original?.invoke()
+                    web.beforeHardwareDraw=original
+                    val b=android.graphics.Bitmap.createBitmap(web.width,96,android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas=android.graphics.Canvas(b);canvas.translate(-web.scrollX.toFloat(),-(web.scrollY+web.height-96).toFloat())
+                    web.sampling=true;try { web.draw(canvas) } finally { web.sampling=false }
+                    java.io.File(output,"web-bottom-$desktop.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+                }
+                web.invalidate()
+            }
+            Thread.sleep(300);screenshot("cyan-$desktop")
+        }
+        result.put("layers",layers)
+        ui { activity.findViewById<WebView>(R.id.browser).visibility=View.INVISIBLE;activity.window.decorView.setBackgroundColor(android.graphics.Color.MAGENTA) }
+        Thread.sleep(300);screenshot("native-magenta")
+        java.io.File(output,"metrics.json").writeText(result.toString(2))
+        instrumentation.sendStatus(0,android.os.Bundle().apply { putString("reworkMetrics",result.toString()) })
+    }
+
+    fun testRealMenuAnchorActionsAndSamplingHardGate() {
+        val activity=launch();submit(activity,"b.fixture.test");waitFor("bind") { visible(activity) };Thread.sleep(500)
+        val web=activity.findViewById<WebView>(R.id.browser)
+        val state=ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+        val source=ShopActivity::class.java.getDeclaredField("glassSource").apply { isAccessible=true }.get(activity) as WebGlassSource
+        assertEquals("b.fixture.test",state.host)
+        val before=checkNotNull(nativeBounds("更多操作"))
+        nativeClick("更多操作")
+        // A focusable Popup hides its parent window from accessibility, so verify the
+        // three live dots at the original measured screen positions in actual pixels.
+        val shot=instrumentation.uiAutomation.takeScreenshot()
+        java.io.File(context.getExternalFilesDir(null),"rework-real-menu.png").outputStream().use { shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+        for(dx in listOf(-18,0,18)) {
+            val pixel=shot.getPixel(before.centerX()+dx,before.centerY())
+            assertTrue("anchor dots remain at their original position",android.graphics.Color.red(pixel)<100 && android.graphics.Color.green(pixel)<100 && android.graphics.Color.blue(pixel)<100)
+        }
+        java.io.File(context.getExternalFilesDir(null),"rework-real-menu.png").outputStream().use { shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+        assertNotNull(nativeBounds("切换电脑模式"));assertNull(nativeBounds("关闭"));assertNull(nativeBounds("已开启"))
+        nativeClick("切换电脑模式");waitFor("desktop document") { state.ready && state.desktop };Thread.sleep(500)
+        assertEquals("1280",script(activity,"document.documentElement.clientWidth"))
+        nativeClick("更多操作");assertNotNull(nativeBounds("切换手机模式"));nativeClick("切换手机模式")
+        waitFor("phone document") { state.ready && !state.desktop };Thread.sleep(400)
+        val url="https://b.fixture.test/second?q=menu#part"
+        ui { web.loadUrl(url) };waitFor("second") { state.ready && web.url==url }
+        nativeClick("更多操作");nativeClick("复制当前网址")
+        ui { assertEquals(url,(activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip?.getItemAt(0)?.text?.toString()) }
+        val count=FixtureActivity.loads.size
+        nativeClick("更多操作");nativeClick("刷新");waitFor("one refresh request") { FixtureActivity.loads.size>count && state.ready }
+        assertEquals(count+1,FixtureActivity.loads.size)
+        nativeClick("更多操作");nativeClick("返回");waitFor("returned root") { state.ready && web.url=="https://b.fixture.test/" }
+        ui { web.loadUrl(url) };waitFor("second again") { state.ready && web.url==url }
+        nativeClick("更多操作");nativeClick("回到主页");waitFor("home history cleared") { state.ready && web.url=="https://b.fixture.test/" && !web.canGoBack() }
+        ui { state.toolbar=false };Thread.sleep(350)
+        val hidden=source.captures;script(activity,"scrollTo(0,900)");Thread.sleep(300);assertEquals(hidden,source.captures)
+        ui { state.toolbar=true };waitFor("fresh frame on recall") { source.captures>hidden }
+        ui { source.allow(false);state.menu=true };Thread.sleep(400)
+        val blocked=source.captures;script(activity,"scrollTo(0,1200)");Thread.sleep(300);assertEquals("stale Compose cannot override Activity hard gate",blocked,source.captures)
+        ui { state.menu=false;source.allow(true) }
+    }
+
+    fun testRealHomeMenuClearsHistoryAfterSameOriginLanding() {
+        val activity=launch();submit(activity,"redirect.fixture.test")
+        waitFor("initial same-origin landing") { visible(activity) && activity.findViewById<WebView>(R.id.browser)?.url=="https://redirect.fixture.test/landing" }
+        val web=activity.findViewById<WebView>(R.id.browser)
+        ui { web.loadUrl("https://redirect.fixture.test/second") }
+        waitFor("second page") { web.url=="https://redirect.fixture.test/second" && web.progress==100 }
+        Thread.sleep(400);nativeClick("更多操作");nativeClick("回到主页")
+        waitFor("redirected home visually committed and old history cleared") { visible(activity) && web.url=="https://redirect.fixture.test/landing" && !web.canGoBack() }
+        assertEquals("redirect.fixture.test",(ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance).host)
+    }
+
     fun testOriginAndStrictProtocol() {
         assertEquals("https://example.com/", OriginPolicy.normalize("EXAMPLE.com:443/a?q=1#x"))
         assertEquals("https://xn--bcher-kva.example/", OriginPolicy.normalize("https://bücher.example/a"))
@@ -497,7 +635,7 @@ class PhaseOneTest : InstrumentationTestCase() {
         val png = brands.icon("https://mc.mc520.top/", "/images/telegram.png")
         assertNotNull("production default SVG", svg)
         assertNotNull("production PNG", png)
-        assertEquals(96, svg!!.width); assertEquals(96, png!!.width)
+        assertEquals(192, svg!!.width); assertEquals(192, png!!.width)
         assertNull(brands.icon("https://mc.mc520.top/", "/missing-phase2-icon.png"))
     }
 

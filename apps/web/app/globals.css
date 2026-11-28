@@ -11,6 +11,7 @@
  */
 @layer base {
   :root {
+    --myshop-safe-bottom: calc(env(safe-area-inset-bottom, 0px) * var(--aikayun-viewport-ratio, 1));
     color-scheme: light;
 
     --background: 210 20% 98%;
@@ -101,7 +102,7 @@
 
     --storefront-max-width: 90rem;
     --storefront-gutter: max(0.75rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
-    --product-purchase-scroll-margin: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    --product-purchase-scroll-margin: calc(5.5rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)));
 
     --motion-fast: 140ms;
     --motion-standard: 180ms;
@@ -1045,7 +1046,7 @@
   }
 
   .safe-area-pb {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--myshop-safe-bottom, env(safe-area-inset-bottom));
   }
 
   .safe-area-pt {
@@ -1099,7 +1100,7 @@
   -webkit-overflow-scrolling: touch;
   padding: max(0.5rem, env(safe-area-inset-top, 0px))
     max(0.75rem, env(safe-area-inset-right, 0px))
-    max(0.5rem, env(safe-area-inset-bottom, 0px))
+    max(0.5rem, var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)))
     max(0.75rem, env(safe-area-inset-left, 0px));
 }
 
@@ -1120,8 +1121,8 @@
 .product-image-viewer-original[data-shape="wide"] {
   width: auto;
   max-width: 100%;
-  max-height: calc(100vh - max(0.5rem, env(safe-area-inset-top, 0px)) - max(0.5rem, env(safe-area-inset-bottom, 0px)));
-  max-height: calc(100dvh - max(0.5rem, env(safe-area-inset-top, 0px)) - max(0.5rem, env(safe-area-inset-bottom, 0px)));
+  max-height: calc(100vh - max(0.5rem, env(safe-area-inset-top, 0px)) - max(0.5rem, var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px))));
+  max-height: calc(100dvh - max(0.5rem, env(safe-area-inset-top, 0px)) - max(0.5rem, var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px))));
 }
 
 @media (max-width: 1023px) {
@@ -1145,7 +1146,7 @@
 }
 
 .product-purchase-dock-viewport {
-  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  padding-bottom: calc(0.75rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom)));
 }
 
 .product-purchase-dock-closed,
@@ -1157,7 +1158,7 @@
 }
 
 .product-purchase-panel {
-  --purchase-bottom-gap: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  --purchase-bottom-gap: calc(0.75rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)));
   position: fixed;
   /* Radix's scroll lock exposes the removed scrollbar width on the body. */
   inset-inline: 0.75rem calc(0.75rem + var(--removed-body-scroll-bar-size, 0px));
@@ -1209,7 +1210,7 @@
 /* Mobile layouts share the same page gutter and card rhythm. */
 @media (max-width: 767px) {
   :root {
-    --product-purchase-scroll-margin: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+    --product-purchase-scroll-margin: calc(4.75rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)));
   }
 
   .storefront-main,
@@ -1268,10 +1269,10 @@
   .account-balance { border-color: hsl(var(--primary) / 0.14); border-radius: var(--radius-group); }
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
-  .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px))); }
   .product-purchase-dock-closed,
   .product-purchase-panel { --purchase-corner: 0.875rem; }
-  .product-purchase-panel { --purchase-bottom-gap: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .product-purchase-panel { --purchase-bottom-gap: calc(0.5rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px))); }
   .product-purchase-dock-viewport .action-bar-material,
   .product-purchase-panel.action-bar-material { border-radius: 0.875rem; }
   .admin-header-layer { padding: max(0.5rem, env(safe-area-inset-top, 0px)) 1rem 0; }
@@ -1502,13 +1503,13 @@ dialog.media-manage-dialog::backdrop {
 
 /* Store navigation: the drawing surface includes room for the glass and shadow. */
 .storefront-main--bottom-navigation {
-  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(5.5rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)));
 }
 .storefront-main--messages {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(5.5rem + var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)));
 }
 .store-shell[data-chat-route] {
   height: 100dvh;
@@ -1519,7 +1520,7 @@ dialog.media-manage-dialog::backdrop {
   min-height: var(--chat-viewport-height);
 }
 .store-shell[data-chat-keyboard-open] .storefront-main--messages {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px));
 }
 .store-liquid-surface {
   --store-liquid-bleed: 76px;
@@ -1528,7 +1529,7 @@ dialog.media-manage-dialog::backdrop {
   left: 50%;
   /* The canvas has 48px of lower drawing room; place the capsule 12px
      above the safe area without reducing that room. */
-  bottom: calc(env(safe-area-inset-bottom, 0px) - 36px);
+  bottom: calc(var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)) - 36px);
   width: min(584px, calc(80vw + 152px));
   transform: translateX(-50%);
   pointer-events: none;
@@ -1641,7 +1642,7 @@ dialog.media-manage-dialog::backdrop {
 @media (max-width: 767px) {
   .myshop-dialog,
   .myshop-alert-dialog {
-    max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top, 0px)) - max(0.75rem, env(safe-area-inset-bottom, 0px)));
+    max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top, 0px)) - max(0.75rem, var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px))));
     gap: 0.75rem;
     padding: 0.75rem;
   }
@@ -1652,7 +1653,7 @@ dialog.media-manage-dialog::backdrop {
     overscroll-behavior: contain;
   }
 
-  .myshop-sheet-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .myshop-sheet-bottom { padding-bottom: var(--myshop-safe-bottom, env(safe-area-inset-bottom, 0px)); }
 }
 
 /* Dense management tables keep their headers and scroll inside their own region. */

@@ -8,7 +8,7 @@ android {
         applicationId = "aikayun.muchen.shop"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.1"
         buildConfigField("String", "AUTHORITY_ORIGIN", "\"${authority.trimEnd('/')}\"")
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"

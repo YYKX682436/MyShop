@@ -352,7 +352,7 @@ export function SupportThread({ id, orderId, orderNo, afterSaleRequestId, afterS
     }} className="absolute bottom-[5.7rem] left-1/2 z-10 inline-flex min-h-10 -translate-x-1/2 items-center gap-2 rounded-full border border-border-subtle bg-surface px-4 text-sm shadow-lg">
       <ArrowDown className="size-4" aria-hidden="true" />回到最新
     </button>}
-    <form ref={form} onSubmit={send} className="shrink-0 border-t border-border-subtle bg-background px-2 py-2 sm:px-3" style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}>
+    <form ref={form} onSubmit={send} className="shrink-0 border-t border-border-subtle bg-background px-2 py-2 sm:px-3" style={{ paddingBottom: "max(0.5rem, var(--myshop-safe-bottom, env(safe-area-inset-bottom)))" }}>
       {(displayedOrderId || activeSale || noticeId) && <div className="mb-2 flex min-w-0 flex-wrap gap-1.5">
         {displayedOrderId && <ContextChip label={"订单 #" + (displayedOrderNo || "—")} onClear={activeSale && !orderId ? undefined : onClearOrder} />}
         {activeSale && <ContextChip label={"第 " + activeSale.round + " 次售后"} onClear={admin ? () => setAdminSale(null) : onClearAfterSale} />}

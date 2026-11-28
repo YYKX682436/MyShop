@@ -40,7 +40,7 @@ class SiteBrands(private val preferences: SharedPreferences) {
                 require(connection.responseCode == 200 && connection.contentLengthLong <= 524288)
                 contentType = connection.contentType ?: ""
                 bytes = connection.inputStream.use { input ->
-                    val output = ByteArrayOutputStream(); val buffer = ByteArray(4096)
+                    val output = ByteArrayOutputStream(); val buffer = ByteArray(40192)
                     while (output.size() <= 524288) {
                         val n = input.read(buffer, 0, minOf(buffer.size, 524289 - output.size()))
                         if (n < 0) break
@@ -55,14 +55,14 @@ class SiteBrands(private val preferences: SharedPreferences) {
         if (contentType.contains("svg") || data.take(256).toByteArray().toString(Charsets.UTF_8).contains("<svg")) {
             val svg = SVG.getFromInputStream(data.inputStream())
             // AndroidSVG parses and renders vectors; external files/fonts/images are not registered.
-            svg.documentWidth = 96f; svg.documentHeight = 96f
-            Bitmap.createBitmap(96,96,Bitmap.Config.ARGB_8888).also { svg.renderToCanvas(Canvas(it)) }
+            svg.documentWidth = 192f; svg.documentHeight = 192f
+            Bitmap.createBitmap(192,192,Bitmap.Config.ARGB_8888).also { svg.renderToCanvas(Canvas(it)) }
         } else {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(data,0,data.size,bounds)
             require(bounds.outWidth in 1..16384 && bounds.outHeight in 1..16384)
-            val options = BitmapFactory.Options().apply { inSampleSize = maxOf(1, maxOf(bounds.outWidth,bounds.outHeight) / 128) }
-            requireNotNull(BitmapFactory.decodeByteArray(data,0,data.size,options)).let { Bitmap.createScaledBitmap(it,96,96,true) }
+            val options = BitmapFactory.Options().apply { inSampleSize = maxOf(1, maxOf(bounds.outWidth,bounds.outHeight) / 192) }
+            requireNotNull(BitmapFactory.decodeByteArray(data,0,data.size,options)).let { Bitmap.createScaledBitmap(it,192,192,true) }
         }
     }.getOrNull()
 }

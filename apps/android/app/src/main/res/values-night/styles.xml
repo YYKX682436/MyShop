@@ -8,5 +8,6 @@
         <item name="android:windowSplashScreenBackground">#101622</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_shop</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 </resources>
