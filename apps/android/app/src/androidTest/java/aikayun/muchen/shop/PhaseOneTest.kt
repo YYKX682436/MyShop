@@ -78,7 +78,8 @@ class PhaseOneTest : InstrumentationTestCase() {
         val point=checkNotNull(rect) { "Native control missing: $label" }
         val time=android.os.SystemClock.uptimeMillis()
         instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time,0,point.exactCenterX(),point.exactCenterY(),0))
-        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time+40,1,point.exactCenterX(),point.exactCenterY(),0))
+        Thread.sleep(40)
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,android.os.SystemClock.uptimeMillis(),1,point.exactCenterX(),point.exactCenterY(),0))
         Thread.sleep(550)
     }
     private fun script(activity: Activity, js: String): String {
@@ -190,12 +191,34 @@ class PhaseOneTest : InstrumentationTestCase() {
         nativeClick("更多操作");nativeClick("返回");waitFor("returned root") { state.ready && web.url=="https://b.fixture.test/" }
         ui { web.loadUrl(url) };waitFor("second again") { state.ready && web.url==url }
         nativeClick("更多操作");nativeClick("回到主页");waitFor("home history cleared") { state.ready && web.url=="https://b.fixture.test/" && !web.canGoBack() }
-        ui { state.toolbar=false };Thread.sleep(350)
+        val savedTitle=state.title;val savedHost=state.host
+        ui { state.title="很长的商城名称用于验证省略和独立按钮".repeat(8);state.host="very-long-authorized-shop-host-name.fixture.test" }
+        Thread.sleep(300)
+        assertEquals("long text cannot move or shrink the right target",before,nativeBounds("更多操作"))
+        nativeClick("更多操作")
+        assertNotNull(nativeBounds("切换电脑模式"))
+        instrumentation.uiAutomation.takeScreenshot().let { image -> java.io.File(context.getExternalFilesDir(null),"rework-long-caption.png").outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+        instrumentation.uiAutomation.executeShellCommand("input keyevent 4").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
+        ui { state.title=savedTitle;state.host=savedHost }
+        ui { state.toolbar=false }
+        waitFor("menu tail and toolbar transition fully leave the screen") { !WebGlassSource::class.java.getDeclaredField("enabled").apply { isAccessible=true }.getBoolean(source) }
         val hidden=source.captures;script(activity,"scrollTo(0,900)");Thread.sleep(300);assertEquals(hidden,source.captures)
         ui { state.toolbar=true };waitFor("fresh frame on recall") { source.captures>hidden }
         ui { source.allow(false);state.menu=true };Thread.sleep(400)
         val blocked=source.captures;script(activity,"scrollTo(0,1200)");Thread.sleep(300);assertEquals("stale Compose cannot override Activity hard gate",blocked,source.captures)
-        ui { state.menu=false;source.allow(true) }
+        ui { state.menu=false;source.allow(true) };Thread.sleep(600)
+        try {
+            ui { activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            waitFor("short landscape menu") { activity.window.decorView.width>activity.window.decorView.height }
+            Thread.sleep(500);nativeClick("更多操作")
+            val root=activity.window.decorView
+            val x=root.width-(112*activity.resources.displayMetrics.density).toInt()
+            instrumentation.uiAutomation.executeShellCommand("input swipe $x ${root.height-180} $x 450 700").use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
+            Thread.sleep(400);assertNotNull("last menu row can scroll into view",nativeBounds("切换电脑模式"))
+            nativeClick("切换电脑模式");waitFor("last landscape menu action executes") { state.ready && state.desktop }
+        } finally {
+            ui { activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        }
     }
 
     fun testRealHomeMenuClearsHistoryAfterSameOriginLanding() {
@@ -531,7 +554,9 @@ class PhaseOneTest : InstrumentationTestCase() {
         submit(activity, "b.fixture.test")
         waitFor("bind") { visible(activity) }
         script(activity, "localStorage.setItem('mode','preserved');document.cookie='mode=preserved;secure;samesite=lax';document.querySelector('a').href='/second?q=ok#anchor'")
-        Thread.sleep(500) // wait for the first-entry transition's blocking overlay to leave
+        val gateDeadline=System.currentTimeMillis()+5000
+        while(nativeBounds("成功绑定后，需清除应用数据才能更换商城")!=null && System.currentTimeMillis()<gateDeadline) Thread.sleep(50)
+        Thread.sleep(150) // the actual overlay tree has left; allow its final draw to commit
         val rect = org.json.JSONArray(script(activity, "(()=>{const r=document.querySelector('a').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2,innerWidth]})()"))
         var x = 0f; var y = 0f
         ui {
@@ -542,7 +567,8 @@ class PhaseOneTest : InstrumentationTestCase() {
         }
         val time = android.os.SystemClock.uptimeMillis()
         instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time,android.view.MotionEvent.ACTION_DOWN,x,y,0))
-        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time+80,android.view.MotionEvent.ACTION_UP,x,y,0))
+        Thread.sleep(80)
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x,y,0))
         waitFor("GET second") { activity.findViewById<WebView>(R.id.browser)?.url?.contains("/second?q=ok#anchor") == true && activity.findViewById<WebView>(R.id.browser).progress == 100 }
         Thread.sleep(300)
         val before = FixtureActivity.loads.size

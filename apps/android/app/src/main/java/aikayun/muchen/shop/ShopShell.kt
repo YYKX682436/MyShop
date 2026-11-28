@@ -165,11 +165,13 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                                     }
                                 },
                             ) { _, close ->
+                                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                                 listOf("返回", "刷新", "回到主页", "分享当前网页", "在浏览器打开", "复制当前网址", if(appearance.desktop) "切换手机模式" else "切换电脑模式").forEachIndexed { index, title ->
                                     if(index==3 || index==6) HorizontalDivider(Modifier.padding(horizontal=16.dp,vertical=4.dp),thickness=1.dp,color=LocalContentColor.current.copy(alpha=0.12f))
                                     GlasmioMenuItem(title=title, enabled=index!=0 || appearance.canBack, rowHeight=48.dp,
                                         icon={ ActionIcon(index, appearance.desktop) },
                                         onClick={ if(appearance.menu) { action(index);close() } })
+                                }
                                 }
                             }
                         }
