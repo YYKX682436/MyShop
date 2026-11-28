@@ -20,7 +20,7 @@ ComponentActivity 与一个 Compose 根宿主管理唯一 WebView 的挂载。Ac
 
 ## 安全区和电脑模式
 
-MyShop WebView 接收系统原生 insets，ComposeView 不提前消费；CSS env 处理系统栏/挖孔，WebView visualViewport 处理 IME。额外顶栏间距并入网站唯一 viewport 脚本，按实际 viewport CSS 宽度 / WebView dp 宽度换算，显隐不改正文布局。客服、购买区的既有 env/visualViewport 机制保留。授权外站采用稳定原生安全边距并将已处理系统 inset 置零继续传递，只有其 viewport 由原生最小兼容脚本管理。
+MyShop 手机模式 WebView 接收系统原生 insets，ComposeView 不提前消费；CSS env 处理系统栏/挖孔，WebView visualViewport 处理 IME。真机确认桌面缩放后原有 CSS safe-area 的首屏和底部避让不足，因此电脑模式仅用稳定原生安全边距处理系统栏/挖孔，并把已处理的系统 inset 置零继续传给 WebView；IME 仍只由 WebView 处理，没有额外键盘 padding。额外顶栏间距并入网站唯一 viewport 脚本，按实际 viewport CSS 宽度 / WebView dp 宽度换算，显隐不改正文布局。客服、购买区的既有 env/visualViewport 机制保留。授权外站采用稳定原生安全边距并将已处理系统 inset 置零继续传递，只有其 viewport 由原生最小兼容脚本管理。
 
 电脑模式按绑定站点保存，复用 WebView、Cookie、历史和当前 URL。桌面 UA 保留真实 Chromium 版本；有 USER_AGENT_METADATA 时同步 mobile/platform 等信息，无特性则只降级 UA。手机与电脑 UA 都含 `AikayunShop/1.0.1`；该标记只供显示和付款设备判断，不授予身份或权限。稳定 GET 页面切换只 reload 一次；POST/未知方法或加载中拒绝切换，WebView 表单重发明确取消。MYSHOP 采用 1280 CSS px、桌面断点和双指缩放；同时按 WebView 实际物理像素宽度设置原生初始缩放，避免只变宽布局而继承手机放大倍率（整数百分比会带来约 1% 的视口取整误差）；首个可绘制文档若仍保留旧倍率，再按实际 visualViewport.width 做一次有身份检查的 zoomBy 校正，不增加重载，也不持续纠正用户后续的双指缩放，恢复手机时恢复原 UA/元数据与 device-width。
 

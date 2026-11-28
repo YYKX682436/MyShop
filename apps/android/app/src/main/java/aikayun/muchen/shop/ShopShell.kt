@@ -66,6 +66,7 @@ class ShellAppearance {
     var title by mutableStateOf("艾卡云")
     var icon by mutableStateOf<android.graphics.Bitmap?>(null)
     var desktop by mutableStateOf(false)
+    var external by mutableStateOf(false)
     var canBack by mutableStateOf(false)
     var dark by mutableStateOf<Boolean?>(null)
 }
@@ -87,14 +88,16 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
         GlasmioBackdropProvider(backdrop) {
             Box(Modifier.fillMaxSize()) {
                 AndroidView(
-                    factory = { android.widget.FrameLayout(it) },
+                    factory = { WebViewHost(it) },
                     modifier = Modifier.fillMaxSize().drawWithContent { source.version.intValue; drawContent() }.glassBackdropSource(backdrop).trackBackdropPosition(backdrop, source.version),
                     update = { host ->
+                        host.configureSafety(appearance.external || appearance.desktop, appearance.external)
                         if (host.getChildAt(0) !== browser) {
                             host.removeAllViews()
                             browser?.let {
                                 (it.parent as? ViewGroup)?.removeView(it)
                                 host.addView(it, ViewGroup.LayoutParams(-1, -1))
+                                it.requestApplyInsets()
                             }
                         }
                     },
@@ -192,6 +195,36 @@ private fun ActionIcon(index: Int) {
                 5 -> { drawRect(color,Offset(7f,7f),Size(14f,14f),style=stroke);line(3f,17f,3f,3f);line(3f,3f,17f,3f) }
                 6 -> { drawRect(color,Offset(2f,3f),Size(20f,14f),style=stroke);line(12f,17f,12f,21f);line(7f,21f,17f,21f) }
             }
+        }
+    }
+}
+
+
+/** Modify insets on the parent so WebView retains its own internal insets listener. */
+private class WebViewHost(context: android.content.Context) : android.widget.FrameLayout(context) {
+    private var nativeSafe = false
+    private var reserveToolbar = false
+    init {
+        setOnApplyWindowInsetsListener { _, insets ->
+            val types = android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
+            val safe = if (nativeSafe) insets.getInsets(types) else android.graphics.Insets.NONE
+            (getChildAt(0)?.layoutParams as? LayoutParams)?.let { params ->
+                val top = safe.top + if (reserveToolbar) (68 * resources.displayMetrics.density).toInt() else 0
+                if (params.leftMargin != safe.left || params.topMargin != top || params.rightMargin != safe.right || params.bottomMargin != safe.bottom) {
+                    params.setMargins(safe.left, top, safe.right, safe.bottom)
+                    getChildAt(0).layoutParams = params
+                }
+            }
+            // Phone MyShop uses CSS env. Scaled desktop WebView needs physical margins;
+            // already handled system edges are zero, while IME still reaches WebView.
+            val remaining = if (nativeSafe) android.view.WindowInsets.Builder(insets).setInsets(types, android.graphics.Insets.NONE).build() else insets
+            onApplyWindowInsets(remaining)
+        }
+    }
+    fun configureSafety(value: Boolean, toolbar: Boolean) {
+        if (nativeSafe != value || reserveToolbar != toolbar) {
+            nativeSafe = value; reserveToolbar = toolbar
+            requestApplyInsets()
         }
     }
 }

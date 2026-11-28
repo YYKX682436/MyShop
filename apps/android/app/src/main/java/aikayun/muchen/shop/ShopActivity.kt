@@ -193,6 +193,7 @@ open class ShopActivity : ComponentActivity() {
                     is Authorization.Allowed -> {
                         authorized = true
                         siteType = result.siteType
+                        appearance.external = siteType == "external"
                         applyAuthorizedBrand(origin, result.brand)
                         val existing = web
                         if (existing != null && bound != null) {
@@ -253,18 +254,6 @@ open class ShopActivity : ComponentActivity() {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         appearance.desktop = preferences.getBoolean("desktop:$origin", false)
         display = AppDisplay(browser, origin, siteType == "external").also { it.configure(appearance.desktop) }
-        if (siteType == "external") browser.setOnApplyWindowInsetsListener { view, insets ->
-            val types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-            val safe = insets.getInsets(types)
-            (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
-                val top = safe.top + dp(68)
-                if (params.topMargin != top || params.leftMargin != safe.left || params.rightMargin != safe.right || params.bottomMargin != safe.bottom) {
-                    params.setMargins(safe.left, top, safe.right, safe.bottom)
-                    view.layoutParams = params
-                }
-            }
-            WindowInsets.Builder(insets).setInsets(types, android.graphics.Insets.NONE).build()
-        }
         browser.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
             if (r-l != oldR-oldL || b-t != oldB-oldT) {
                 glassSource.invalidateFrame()
@@ -542,6 +531,7 @@ open class ShopActivity : ComponentActivity() {
                 appearance.desktop = !appearance.desktop
                 bound?.let { preferences.edit().putBoolean("desktop:$it", appearance.desktop).apply() }
                 display?.configure(appearance.desktop)
+                browser.requestApplyInsets()
                 browser.reload()
             }
         }
@@ -579,6 +569,10 @@ open class ShopActivity : ComponentActivity() {
             val color = runCatching { Color.parseColor(value.optString("color")) }.getOrNull()
             val dark = if (value.optBoolean("dark")) true else color?.let { androidx.core.graphics.ColorUtils.calculateLuminance(it) < 0.45 }
             appearance.dark = dark
+            val resolvedDark = dark ?: isDark()
+            val background = color?.takeIf { Color.alpha(it) == 255 && (androidx.core.graphics.ColorUtils.calculateLuminance(it) < 0.45) == resolvedDark }
+                ?: if (resolvedDark) Color.rgb(16,22,34) else Color.rgb(248,249,251)
+            window.decorView.setBackgroundColor(background)
             WindowCompat.getInsetsController(window, window.decorView).apply {
                 val light = !(dark ?: (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES))
                 isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
