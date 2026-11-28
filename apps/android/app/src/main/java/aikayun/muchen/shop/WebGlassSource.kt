@@ -20,6 +20,7 @@ class ObservedWebView(context: Context) : WebView(context) {
     var changed: (() -> Unit)? = null
     var direction: ((Boolean) -> Unit)? = null
     var interacted: (() -> Unit)? = null
+    var beforeHardwareDraw: (() -> Unit)? = null
     var sampling = false
     private var startX = 0f
     private var startY = 0f
@@ -30,6 +31,13 @@ class ObservedWebView(context: Context) : WebView(context) {
     private var downAt = 0L
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
 
+    override fun onDraw(canvas: Canvas) {
+        // A software snapshot must be followed by the real hardware draw in this same
+        // View traversal. Capturing between traversals can replace Chromium's nested
+        // scrolling hit-test data with the small software clip.
+        if (canvas.isHardwareAccelerated && !sampling) beforeHardwareDraw?.invoke()
+        super.onDraw(canvas)
+    }
     override fun invalidate() { super.invalidate(); if (!sampling) changed?.invoke() }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
@@ -82,41 +90,54 @@ class WebGlassSource {
     private var enabled = false
     private var menu = false
     private var pending = false
+    private var ready = false
     private var last = 0L
     private val capture = Runnable {
         pending = false
         val view = browser
-        if (enabled && view != null && view.width > 0 && view.height > 0) {
-            val density = view.resources.displayMetrics.density
-            val height = minOf(view.height, ceil(density * (if (menu) 560 else 156)).toInt())
-            val scale = 0.4f
-            val bitmap = Bitmap.createBitmap(ceil(view.width * scale).toInt(), ceil(height * scale).toInt(), Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.scale(scale, scale)
-            canvas.translate(-view.scrollX.toFloat(), -view.scrollY.toFloat())
+        if (enabled && view != null) {
+            ready = true
+            // Request one normal traversal, without treating our request as new content.
             view.sampling = true
-            try { view.draw(canvas) } finally { view.sampling = false }
-            frame = GlassFrame(bitmap, view.width, height, view.left, view.top)
-            version.intValue++
-            captures++
-            last = SystemClock.uptimeMillis()
+            try { view.invalidate() } finally { view.sampling = false }
         }
+    }
+    private fun captureBeforeHardwareDraw() {
+        if (!ready) return
+        ready = false
+        val view = browser ?: return
+        if (!enabled || view.width <= 0 || view.height <= 0) return
+        val density = view.resources.displayMetrics.density
+        val height = minOf(view.height, ceil(density * (if (menu) 560 else 156)).toInt())
+        val scale = 0.4f
+        val bitmap = Bitmap.createBitmap(ceil(view.width * scale).toInt(), ceil(height * scale).toInt(), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.scale(scale, scale)
+        canvas.translate(-view.scrollX.toFloat(), -view.scrollY.toFloat())
+        view.sampling = true
+        try { view.draw(canvas) } finally { view.sampling = false }
+        frame = GlassFrame(bitmap, view.width, height, view.left, view.top)
+        version.intValue++
+        captures++
+        last = SystemClock.uptimeMillis()
     }
     fun attach(view: ObservedWebView?) {
         browser?.changed = null
+        browser?.beforeHardwareDraw = null
         browser = view
         invalidateFrame()
         view?.changed = { dirty() }
+        view?.beforeHardwareDraw = { captureBeforeHardwareDraw() }
     }
-    fun invalidateFrame() { frame = null; dirty() }
+    fun invalidateFrame() { frame = null; version.intValue++; dirty() }
     fun active(value: Boolean, expanded: Boolean) {
         val changed = enabled != value || menu != expanded
         enabled = value; menu = expanded
-        if (!enabled) { handler.removeCallbacks(capture); pending = false }
+        if (!enabled) { handler.removeCallbacks(capture); pending = false; ready = false }
         else if (changed) dirty()
     }
     fun dirty() {
-        if (!enabled || pending) return
+        if (!enabled || pending || ready) return
         pending = true
         handler.postDelayed(capture, (67 - (SystemClock.uptimeMillis() - last)).coerceAtLeast(0))
     }

@@ -74,7 +74,7 @@ class ShellAppearance {
 fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance, source: WebGlassSource, action: (Int) -> Unit) {
     val dark = appearance.dark ?: isSystemInDarkTheme()
     val expanded = appearance.menu
-    val sampling = !appearance.gate && (appearance.toolbar || expanded)
+    val sampling = !appearance.gate && appearance.ready && (appearance.toolbar || expanded)
     SideEffect { source.active(sampling, expanded) }
     GlasmioTheme(isDark = dark) {
         // The custom capture records WebView pixels, while AndroidView draws its hardware content.
@@ -117,7 +117,7 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                             GlasmioMenu(
                                 expanded = appearance.menu,
                                 onExpandedChange = { appearance.menu = it },
-                                itemCount = 7, anchorEnabled = appearance.ready, menuAnchorState = anchor, forceBelowAnchor = true,
+                                itemCount = 7, heightOverride = 356.dp, anchorEnabled = appearance.ready, menuAnchorState = anchor, forceBelowAnchor = true,
                                 anchor = { open ->
                                     GlasmioIconButton(onClick = open, sampleBackdrop = false, navigationSurfaceColor = Color.Transparent, modifier = Modifier.size(52.dp).glasmioMenuAnchor(anchor).semantics { contentDescription = "更多操作" }, size = 48.dp) {
                                         val color = LocalContentColor.current
@@ -129,7 +129,7 @@ fun ShopShell(browser: WebView?, gate: LinearLayout, appearance: ShellAppearance
                                     GlasmioMenuItem(title = title, enabled = index != 0 || appearance.canBack,
                                         rowHeight = 48.dp, icon = { ActionIcon(index) },
                                         trailing = if (index == 6) {{ Text(if (appearance.desktop) "已开启" else "关闭") }} else null,
-                                        onClick = { close(); action(index) })
+                                        onClick = { if (appearance.menu) { action(index); close() } })
                                 }
                             }
                         }

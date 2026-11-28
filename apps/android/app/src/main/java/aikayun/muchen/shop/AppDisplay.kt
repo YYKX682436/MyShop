@@ -14,12 +14,22 @@ class AppDisplay(private val view: WebView, private val origin: String, private 
     private val metadataSupported = WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)
     private val originalMetadata = if (metadataSupported) WebSettingsCompat.getUserAgentMetadata(view.settings) else null
     private var script: ScriptHandler? = null
+    private var fitPending = false
+    private var generation = 0
+    private var closed = false
     var desktop = false
         private set
     private val wireOrigin = origin.trimEnd('/')
 
     fun configure(value: Boolean) {
+        generation++
+        fitPending = value
         desktop = value
+        // WebView initialScale is physical-pixel percent (unlike CSS viewport scale).
+        // Pin the first desktop presentation before its one reload; otherwise WebView may
+        // retain the previous document's mobile zoom even with a 1280 layout viewport.
+        val pixels = if (view.width > 0) view.width else view.resources.displayMetrics.widthPixels
+        view.setInitialScale(if (value) kotlin.math.round(pixels * 100f / 1280f).toInt().coerceAtLeast(1) else 0)
         view.settings.apply {
             useWideViewPort = true
             loadWithOverviewMode = true
@@ -34,7 +44,7 @@ class AppDisplay(private val view: WebView, private val origin: String, private 
                 .setModel("").build() else originalMetadata)
         }
         // Changing UA during loading can initiate a reload. Caller only switches a stable document.
-        val ua = if (value) originalUa.replace(Regex("\\([^)]*\\)"), "(X11; Linux x86_64)")
+        val ua = if (value) originalUa.replaceFirst(Regex("\\([^)]*\\)"), "(X11; Linux x86_64)")
             .replace("; wv", "").replace("Version/4.0 ", "").replace(" Mobile", "") else originalUa
         view.settings.userAgentString = "$ua AikayunShop/${BuildConfig.VERSION_NAME}"
     }
@@ -62,7 +72,20 @@ class AppDisplay(private val view: WebView, private val origin: String, private 
             script = WebViewCompat.addDocumentStartJavaScript(view, javascript(), setOf(wireOrigin))
         }
     }
-    fun close() { script?.remove(); script = null }
+    fun settleOverview(isCurrent: () -> Boolean) {
+        if (!desktop || !fitPending || closed) return
+        fitPending = false
+        val expected = generation
+        view.evaluateJavascript("window.visualViewport?.width || innerWidth") { result ->
+            if (closed || expected != generation || !desktop || !isCurrent()) return@evaluateJavascript
+            val width = result.toFloatOrNull() ?: return@evaluateJavascript
+            val factor = width / 1280f
+            // One display correction after the document is drawable, without another load.
+            // Some WebViews preserve the old page zoom despite the new initial-scale meta.
+            if (factor in 0.05f..20f && kotlin.math.abs(factor - 1f) > 0.03f) view.zoomBy(factor)
+        }
+    }
+    fun close() { closed = true; generation++; script?.remove(); script = null }
 
     companion object {
         private val EXTERNAL = """

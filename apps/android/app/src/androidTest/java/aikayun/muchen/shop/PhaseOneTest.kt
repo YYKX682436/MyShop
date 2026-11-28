@@ -383,8 +383,9 @@ class PhaseOneTest : InstrumentationTestCase() {
         assertEquals("https://c.fixture.test/", binding())
     }
 
-    private fun action(activity: ShopActivity, item: Int) = ui {
-        ShopActivity::class.java.getDeclaredMethod("menuAction", Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, item)
+    private fun action(activity: ShopActivity, item: Int) {
+        waitFor("native menu becomes available") { ShopActivity::class.java.getDeclaredField("pageReady").apply { isAccessible=true }.getBoolean(activity) }
+        ui { ShopActivity::class.java.getDeclaredMethod("menuAction", Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, item) }
     }
 
     fun testDesktopViewportRoundTripHistoryStorageAndClipboard() {
@@ -411,7 +412,12 @@ class PhaseOneTest : InstrumentationTestCase() {
         ui { browser = activity.findViewById(R.id.browser) }
         action(activity, 6)
         waitFor("one reload") { FixtureActivity.loads.size == before + 1 && browser!!.progress == 100 }
-        assertEquals("1280", script(activity, "document.documentElement.clientWidth"))
+        assertTrue(script(activity, "document.documentElement.clientWidth").toInt() in 1264..1296)
+        waitFor("desktop visual commit") { ShopActivity::class.java.getDeclaredField("pageReady").apply{isAccessible=true}.getBoolean(activity) }
+        Thread.sleep(300)
+        val desktopGeometry=script(activity,"JSON.stringify({client:document.documentElement.clientWidth,width:visualViewport.width,scale:visualViewport.scale,meta:document.querySelector('meta[name=viewport]').content})")
+        instrumentation.sendStatus(0,android.os.Bundle().apply{putString("desktopGeometry",desktopGeometry)})
+        assertTrue("desktop must actually fit, not merely report a wide layout: $desktopGeometry", script(activity, "visualViewport.width").toDouble() in 1240.0..1320.0)
         assertEquals("true", script(activity, "matchMedia('(min-width: 1024px)').matches"))
         assertEquals("false", script(activity, "navigator.userAgentData.mobile"))
         assertEquals("true", script(activity, "navigator.userAgent.includes('AikayunShop/') && !navigator.userAgent.includes(' Mobile')"))
@@ -463,6 +469,7 @@ class PhaseOneTest : InstrumentationTestCase() {
         Thread.sleep(300)
         assertEquals(count, FixtureActivity.loads.size)
         assertFalse(context.getSharedPreferences("binding", Context.MODE_PRIVATE).getBoolean("desktop:https://b.fixture.test/", false))
+        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         ui { activity.findViewById<WebView>(R.id.browser).loadUrl("https://b.fixture.test/second") }
         waitFor("GET ready") { activity.findViewById<WebView>(R.id.browser)?.url?.endsWith("/second") == true && activity.findViewById<WebView>(R.id.browser).progress == 100 }
         Thread.sleep(200)
@@ -471,13 +478,16 @@ class PhaseOneTest : InstrumentationTestCase() {
         var browser: WebView? = null
         ui { browser = activity.findViewById(R.id.browser); activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         waitFor("landscape") { activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+        Thread.sleep(400)
+        assertTrue("desktop layout survives rotation",script(activity,"document.documentElement.clientWidth").toInt() in 1264..1296)
+        assertTrue("desktop overview survives rotation",script(activity,"visualViewport.width").toDouble() in 1240.0..1320.0)
         ui { assertSame(browser, activity.findViewById(R.id.browser)); activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
         waitFor("portrait") { activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
         ui { activity.finish() }
         instrumentation.waitForIdleSync()
         val restarted = launch()
         waitFor("desktop restart") { visible(restarted) }
-        assertEquals("1280", script(restarted, "document.documentElement.clientWidth"))
+        assertTrue(script(restarted, "document.documentElement.clientWidth").toInt() in 1264..1296)
         assertTrue(script(restarted, "navigator.userAgent").contains("AikayunShop/"))
     }
 
@@ -540,13 +550,22 @@ class PhaseOneTest : InstrumentationTestCase() {
         val state = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
         var browser: WebView?=null;var width=0f
         ui { browser=activity.findViewById(R.id.browser); width=browser!!.width.toFloat() }
-        val r=org.json.JSONArray(script(activity,"(()=>{const r=document.querySelector('.internal').getBoundingClientRect();return [r.y,innerWidth]})()"))
-        val scale=width/r.getDouble(1)
-        val x=width/2;val from=((r.getDouble(0)+300)*scale).toFloat();val to=((r.getDouble(0)+80)*scale).toFloat()
+        script(activity,"document.activeElement?.blur();document.querySelector('.internal').scrollIntoView({block:'center'})")
+        Thread.sleep(200)
+        val r=org.json.JSONArray(script(activity,"(()=>{const r=document.querySelector('.internal').getBoundingClientRect();return [r.top,r.bottom,innerWidth,visualViewport.height,visualViewport.offsetTop]})()"))
+        val scale=width/r.getDouble(2)
+        val bottom=minOf(r.getDouble(1)-30,r.getDouble(3)+r.getDouble(4)-40)
+        val top=maxOf(r.getDouble(0)+30,bottom-180)
+        val x=width/2;val from=(bottom*scale).toFloat();val to=(top*scale).toFloat()
+        script(activity,"window.touchProbe=[];addEventListener('touchstart',e=>touchProbe.push({y:e.touches[0].clientY,x:e.touches[0].clientX,target:e.target.outerHTML.slice(0,120)}),{passive:true})")
+        val beforeGeometry=script(activity,"JSON.stringify({r:document.querySelector('.internal').getBoundingClientRect().toJSON(),height:document.querySelector('.internal').scrollHeight,client:document.querySelector('.internal').clientHeight,vw:visualViewport.width,vh:visualViewport.height,scale:visualViewport.scale,scrollY:scrollY})")
+        instrumentation.sendStatus(0,android.os.Bundle().apply{putString("geometry","$beforeGeometry from=$from to=$to")})
         gesture(x,from,to)
         waitFor("internal user scroll hides toolbar") { !state.toolbar }
         Thread.sleep(300) // compositor scroll updates follow the observed input events
-        assertTrue("inner container actually scrolled",script(activity,"document.querySelector('.internal').scrollTop").toDouble()>0)
+        val innerScroll=script(activity,"document.querySelector('.internal').scrollTop").toDouble()
+        instrumentation.sendStatus(0,android.os.Bundle().apply{putString("scroll","inner=$innerScroll main="+script(activity,"scrollY")+" touches="+script(activity,"JSON.stringify(touchProbe)"))})
+        assertTrue("inner container actually scrolled",innerScroll>0)
         gesture(x,to,from)
         waitFor("reverse gesture recalls toolbar") { state.toolbar }
         val count=FixtureActivity.loads.size
@@ -556,6 +575,59 @@ class PhaseOneTest : InstrumentationTestCase() {
         repeat(3) { ui{state.menu=true};Thread.sleep(180);ui{state.menu=false};Thread.sleep(180) }
         ui { assertSame(browser,activity.findViewById(R.id.browser)) }
         assertEquals(count,FixtureActivity.loads.size)
+    }
+
+    fun testExternalHomepageMetadataFollowsSameOriginLanding() {
+        val activity = launch()
+        FixtureActivity.result = Authorization.Allowed("external")
+        submit(activity, "redirect.fixture.test")
+        waitFor("redirected homepage binds") { visible(activity) && binding() == "https://redirect.fixture.test/" }
+        val state = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+        waitFor("brand comes from the actual landing homepage") { state.title == "Fixture Store" }
+        ui { assertTrue(activity.findViewById<WebView>(R.id.browser).url!!.endsWith("/landing")) }
+    }
+
+    fun testHorizontalLongPressAndRealTwoPointerZoomDoNotHideToolbar() {
+        val activity = launch()
+        submit(activity,"b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        Thread.sleep(500)
+        val state=ShopActivity::class.java.getDeclaredField("appearance").apply{isAccessible=true}.get(activity) as ShellAppearance
+        fun event(start: Long, action: Int, points: List<Pair<Float,Float>>) {
+            val properties=Array(points.size){ i->android.view.MotionEvent.PointerProperties().apply{id=i;toolType=android.view.MotionEvent.TOOL_TYPE_FINGER} }
+            val coords=Array(points.size){ i->android.view.MotionEvent.PointerCoords().apply{x=points[i].first;y=points[i].second;pressure=1f;size=1f} }
+            instrumentation.sendPointerSync(android.view.MotionEvent.obtain(start,android.os.SystemClock.uptimeMillis(),action,points.size,properties,coords,0,0,1f,1f,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0))
+        }
+        var start=android.os.SystemClock.uptimeMillis()
+        event(start,0,listOf(300f to 1500f))
+        for(i in 1..8){Thread.sleep(25);event(start,2,listOf(300f+i*70 to 1500f))}
+        event(start,1,listOf(860f to 1500f))
+        assertTrue(state.toolbar)
+        script(activity,"document.querySelector('.color').scrollIntoView()")
+        Thread.sleep(200)
+        val r=org.json.JSONArray(script(activity,"(()=>{const r=document.querySelectorAll('.color')[1].getBoundingClientRect();return [100,r.top+35,innerWidth]})()"))
+        val scale=1220/r.getDouble(2)
+        val textPoint=(r.getDouble(0)*scale).toFloat() to (r.getDouble(1)*scale).toFloat()
+        start=android.os.SystemClock.uptimeMillis();event(start,0,listOf(textPoint));Thread.sleep(650);event(start,1,listOf(textPoint))
+        assertTrue("long press must not hide toolbar",state.toolbar)
+        assertTrue("WebView still receives text long press",script(activity,"getSelection().toString().length").toInt()>0)
+        script(activity,"getSelection().removeAllRanges()")
+        action(activity,6)
+        Thread.sleep(500)
+        assertTrue(script(activity,"document.documentElement.clientWidth").toInt() in 1264..1296)
+        val before=script(activity,"visualViewport.scale").toDouble()
+        start=android.os.SystemClock.uptimeMillis()
+        event(start,0,listOf(550f to 1400f))
+        event(start,android.view.MotionEvent.ACTION_POINTER_DOWN or (1 shl 8),listOf(550f to 1400f,670f to 1400f))
+        for(i in 1..8){Thread.sleep(30);event(start,2,listOf((550f-i*28) to 1400f,(670f+i*28) to 1400f))}
+        event(start,android.view.MotionEvent.ACTION_POINTER_UP or (1 shl 8),listOf(326f to 1400f,894f to 1400f))
+        event(start,1,listOf(326f to 1400f))
+        Thread.sleep(400)
+        assertTrue("real two-pointer gesture zooms desktop content",script(activity,"visualViewport.scale").toDouble()>before+0.05)
+        assertTrue("two-pointer gesture must not hide toolbar",state.toolbar)
+        action(activity,6);Thread.sleep(500)
+        assertTrue(script(activity,"document.documentElement.clientWidth").toInt()<600)
+        assertEquals("true",script(activity,"navigator.userAgentData.mobile"))
     }
 
 }

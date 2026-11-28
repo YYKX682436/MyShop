@@ -14,7 +14,7 @@ ComponentActivity 与一个 Compose 根宿主管理唯一 WebView 的挂载。Ac
 
 固定使用 Maven Central `io.github.neoruaa.glasmio:glasmio-ui:0.1.4`，对应 `v0.1.4 / 5be4af46778c7e5fb36d6f4e74d52dbf135c3fbf`。通过公开 `rememberLayerBackdrop(onDraw)`、`glassBackdropSource`、`trackBackdropPosition`、`GlasmioBackdropProvider` 接入真实 WebView，GlassSurface/RegularSmall、GlasmioIconButton、GlasmioMenu/Item 提供材质、按压和菜单动画。
 
-真实网页继续硬件绘制；另用 WebView.draw(Canvas) 在当前 scrollX/Y 的正确坐标裁剪顶部小范围，0.4 倍采样，合并内容变化、最多 15 fps。顶栏时截 156dp，菜单时扩大到 560dp（包含模糊外扩），不采窗口、不采原生顶栏、不抓 HTML 长页。每帧使用新 Bitmap，身份/尺寸变化失效；隐藏、遮罩、静止和后台停止采样。Android 12/12L 使用库内简化效果，完整折射需要 Android 13+；真机范围见交付报告。
+真实网页继续硬件绘制；另用 WebView.draw(Canvas) 在当前 scrollX/Y 的正确坐标裁剪顶部小范围，0.4 倍采样，合并内容变化、最多 15 fps。顶栏时截 156dp，菜单时扩大到 560dp（包含模糊外扩），不采窗口、不采原生顶栏、不抓 HTML 长页。捕获安排在同一次 WebView 硬件绘制之前，随后正常硬件绘制恢复 Chromium 的滚动命中状态；每帧使用新 Bitmap，身份/尺寸变化失效；隐藏、遮罩、静止和后台停止采样。Android 12/12L 使用库内简化效果，完整折射需要 Android 13+；真机范围见交付报告。
 
 系统字体和原创云/卡片矢量图标，固定 launcher 前景/背景/单色层。MYSHOP 优先使用 resolve 品牌；EXTERNAL 从授权首页补品牌，失败用域名/默认图标。HTTPS 图标使用成熟 AndroidSVG/BitmapFactory 解码，最多 512KiB、连接/读取各 5 秒、96px 输出。缓存按 canonical origin 隔离，只有匹配正式绑定才写长期缓存，品牌不能充当授权。输入页支持域名/完整 HTTPS 地址和键盘进入，错误保留输入；动画由 Compose 系统时长设置控制，不参与绑定判定。
 
@@ -22,7 +22,7 @@ ComponentActivity 与一个 Compose 根宿主管理唯一 WebView 的挂载。Ac
 
 MyShop WebView 接收系统原生 insets，ComposeView 不提前消费；CSS env 处理系统栏/挖孔，WebView visualViewport 处理 IME。额外顶栏间距并入网站唯一 viewport 脚本，按实际 viewport CSS 宽度 / WebView dp 宽度换算，显隐不改正文布局。客服、购买区的既有 env/visualViewport 机制保留。授权外站采用稳定原生安全边距并将已处理系统 inset 置零继续传递，只有其 viewport 由原生最小兼容脚本管理。
 
-电脑模式按绑定站点保存，复用 WebView、Cookie、历史和当前 URL。桌面 UA 保留真实 Chromium 版本；有 USER_AGENT_METADATA 时同步 mobile/platform 等信息，无特性则只降级 UA。手机与电脑 UA 都含 `AikayunShop/1.0.1`；该标记只供显示和付款设备判断，不授予身份或权限。稳定 GET 页面切换只 reload 一次；POST/未知方法或加载中拒绝切换，WebView 表单重发明确取消。MYSHOP 采用 1280 CSS px、桌面断点和双指缩放，恢复手机时恢复原 UA/元数据与 device-width。
+电脑模式按绑定站点保存，复用 WebView、Cookie、历史和当前 URL。桌面 UA 保留真实 Chromium 版本；有 USER_AGENT_METADATA 时同步 mobile/platform 等信息，无特性则只降级 UA。手机与电脑 UA 都含 `AikayunShop/1.0.1`；该标记只供显示和付款设备判断，不授予身份或权限。稳定 GET 页面切换只 reload 一次；POST/未知方法或加载中拒绝切换，WebView 表单重发明确取消。MYSHOP 采用 1280 CSS px、桌面断点和双指缩放；同时按 WebView 实际物理像素宽度设置原生初始缩放，避免只变宽布局而继承手机放大倍率（整数百分比会带来约 1% 的视口取整误差）；首个可绘制文档若仍保留旧倍率，再按实际 visualViewport.width 做一次有身份检查的 zoomBy 校正，不增加重载，也不持续纠正用户后续的双指缩放，恢复手机时恢复原 UA/元数据与 device-width。
 
 原生只向当前授权的精确 origin 顶层文档注入 `{version, origin, desktop, topBarDp, containerWidthDp}` 和显示事件，优先 document-start，不含尾斜杠；持久化和授权契约仍使用带斜杠 canonical origin。无 JS→native 权限方法，安全区/键盘不另造桥。普通浏览器继续原逻辑。
 

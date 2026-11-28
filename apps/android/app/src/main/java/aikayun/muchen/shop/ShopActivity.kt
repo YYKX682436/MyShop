@@ -51,6 +51,8 @@ open class ShopActivity : ComponentActivity() {
     private var activeBrand: SiteBrand? = null
     private var brandOrigin: String? = null
     private var discoveryDocument = -1L
+    private var homeMetadataPending = false
+    private var brandHomeUrl: String? = null
     private var appearanceCheck: Runnable? = null
     private var documentUrl: String? = null
     private var documentId = 0L
@@ -224,6 +226,8 @@ open class ShopActivity : ComponentActivity() {
     private fun openPage(origin: String, url: String) {
         destroyWeb()
         val token = viewId
+        homeMetadataPending = url == origin
+        brandHomeUrl = null
         val mainRequests = java.util.concurrent.ConcurrentHashMap<String, String>()
         pageReady = false
         val browser = ObservedWebView(this)
@@ -314,6 +318,8 @@ open class ShopActivity : ComponentActivity() {
 
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 if (live(view)) {
+                    appearance.toolbar = true
+                    appearance.menu = false
                     appearance.canBack = view.canGoBack()
                     if (authorized && pageReady) refreshDocumentAppearance(view, token, origin, documentId)
                 }
@@ -346,7 +352,7 @@ open class ShopActivity : ComponentActivity() {
                 appearance.toolbar = true
                 appearance.menu = false
                 mainMethod = mainRequests[url.substringBefore('#')] ?: "UNKNOWN"
-                if (homeClearPending && url == origin) { homeDocument = documentId; homeClearPending = false }
+                if (homeClearPending && url == origin) { homeDocument = documentId; homeClearPending = false; homeMetadataPending = true }
                 documentUrl = url
                 committed = false
                 finished = false
@@ -431,6 +437,7 @@ open class ShopActivity : ComponentActivity() {
                 if (foreground && authorized) {
                     retryUrl = null
                     CookieManager.getInstance().flush()
+                    display?.settleOverview { token == viewId && web === view && navigation == documentId && foreground && authorized }
                     revealWeb()
                 }
             }
@@ -504,7 +511,7 @@ open class ShopActivity : ComponentActivity() {
         updateSampling()
     }
 
-    private fun updateSampling() { glassSource.active(foreground && authorized && !appearance.gate && (appearance.toolbar || appearance.menu), appearance.menu) }
+    private fun updateSampling() { glassSource.active(foreground && authorized && appearance.ready && !appearance.gate && (appearance.toolbar || appearance.menu), appearance.menu) }
 
     private fun menuAction(index: Int) {
         appearance.menu = false
@@ -530,6 +537,8 @@ open class ShopActivity : ComponentActivity() {
             }
             6 -> {
                 if (mainMethod != "GET" || browser.progress < 100) { formNotice(); return }
+                appearance.ready = false
+                glassSource.active(false, false)
                 appearance.desktop = !appearance.desktop
                 bound?.let { preferences.edit().putBoolean("desktop:$it", appearance.desktop).apply() }
                 display?.configure(appearance.desktop)
@@ -564,7 +573,7 @@ open class ShopActivity : ComponentActivity() {
 
     private fun refreshDocumentAppearance(view: WebView, token: Long, origin: String, document: Long) {
         // Theme may follow each document; the site's name/icon may only come from its homepage.
-        view.evaluateJavascript("""(()=>({dark:document.documentElement.classList.contains('dark')||document.documentElement.dataset.theme==='dark',color:document.querySelector('meta[name="theme-color"]')?.content||'',name:document.querySelector('meta[property="og:site_name"]')?.content||document.querySelector('meta[name="application-name"]')?.content||document.title,icon:document.querySelector('link[rel~="icon"]')?.href||''}))()""") { json ->
+        view.evaluateJavascript("""(()=>({dark:document.documentElement.classList.contains('dark')||document.documentElement.dataset.theme==='dark',color:Array.from(document.querySelectorAll('meta[name="theme-color"]')).find(m=>!m.media||matchMedia(m.media).matches)?.content||'',name:document.querySelector('meta[property="og:site_name"]')?.content||document.querySelector('meta[name="application-name"]')?.content||document.title,icon:document.querySelector('link[rel~="icon"]')?.href||''}))()""") { json ->
             if (token != viewId || web !== view || documentId != document || !authorized) return@evaluateJavascript
             val value = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return@evaluateJavascript
             val color = runCatching { Color.parseColor(value.optString("color")) }.getOrNull()
@@ -574,7 +583,9 @@ open class ShopActivity : ComponentActivity() {
                 val light = !(dark ?: (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES))
                 isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
             }
-            if (view.url != origin || discoveryDocument == document) return@evaluateJavascript
+            if ((!homeMetadataPending && view.url != origin && view.url != brandHomeUrl) || discoveryDocument == document) return@evaluateJavascript
+            brandHomeUrl = view.url
+            homeMetadataPending = false
             discoveryDocument = document
             if (siteType == "external" && activeBrand?.name.isNullOrBlank()) value.optString("name").trim().takeIf { it.length in 1..160 }?.let { appearance.title = it }
             val iconUrl = activeBrand?.iconUrl ?: value.optString("icon").takeIf { it.isNotBlank() }
