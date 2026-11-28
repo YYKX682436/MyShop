@@ -20,7 +20,7 @@ ComponentActivity 与一个 Compose 根宿主管理唯一 WebView 的挂载。Ac
 
 头像与标题胶囊使用 GlassSurface 的 nativeNavigationFlex 按压回弹，点击只反馈、不导航。向上累计至少 96dp 且主页面已越过预留顶栏空间才隐藏；向下 24dp 唤回，单次轻滑不再立即收起。嵌套滚动仍按手势方向处理。
 
-菜单通过公开 Backdrop 接口直接重放已有局部 WebView 帧，交给库的 stationary sampler 处理动画坐标，避免跨窗口重复导出整个 Activity 图层。菜单不导出未使用的子玻璃背景，alpha 回调只在可见性边沿更新状态；保留 GlasmioMenu 的原材质、折射和普通弹簧动画，不增加采样循环。正式包实测改善主要在帧耗时中位数，尾部偶发长帧仍见验收报告，不能视为全程零掉帧。
+菜单通过公开 Backdrop 接口直接重放已有局部 WebView 帧，交给库的 stationary sampler 处理动画坐标，避免跨窗口重复导出整个 Activity 图层。菜单不导出未使用的子玻璃背景，alpha 回调只在可见性边沿更新状态；保留 GlasmioMenu 的原材质、折射和普通弹簧动画，不增加采样循环。最终正式包复测未证明稳定降低卡顿，仍有偶发长帧；数值和最终录屏见验收报告，动态观感待用户验收。
 
 系统字体、原创云/卡片品牌矢量与按需 Google Material Outlined 动作图标，固定 launcher 前景/背景/单色层。MYSHOP 优先使用 resolve 品牌；EXTERNAL 从授权首页补品牌，失败用域名/默认图标。HTTPS 图标使用成熟 AndroidSVG/BitmapFactory 解码，最多 512KiB、连接/读取各 5 秒、192px 输出，旧缓存可立即显示。缓存按 canonical origin 隔离，只有匹配正式绑定才写长期缓存，品牌不能充当授权。输入页支持域名/完整 HTTPS 地址和键盘进入，错误保留输入；动画由 Compose 系统时长设置控制，不参与绑定判定。
 
