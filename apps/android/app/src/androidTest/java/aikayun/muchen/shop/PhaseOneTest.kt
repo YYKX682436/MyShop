@@ -19,8 +19,8 @@ class PhaseOneTest : InstrumentationTestCase() {
     private var current: ShopActivity? = null
     private val context get() = instrumentation.targetContext
     private fun ui(action: () -> Unit) = instrumentation.runOnMainSync(action)
-    private fun waitFor(message: String, condition: () -> Boolean) {
-        val end = System.currentTimeMillis() + 12_000
+    private fun waitFor(message: String, timeout: Long = 12_000, condition: () -> Boolean) {
+        val end = System.currentTimeMillis() + timeout
         while (System.currentTimeMillis() < end) {
             var done = false
             ui { done = condition() }
@@ -295,5 +295,29 @@ class PhaseOneTest : InstrumentationTestCase() {
         assertEquals(Authorization.Denied("not_authorized"), client.resolve("https://mc520.top.evil.example/"))
         assertEquals(Authorization.Denied("not_authorized"), client.resolve("https://example.com/"))
         assertEquals(Authorization.Denied("site_unavailable"), client.resolve("https://unregistered-phase1.mc520.top/"))
+    }
+
+    fun testFirstLoadDeadlineSurvivesFurtherNavigationAndRejectsLateCommit() {
+        val activity = launch()
+        val latch = CountDownLatch(1)
+        FixtureActivity.pageWait = latch
+        submit(activity, "a.fixture.test")
+        waitFor("load started") { FixtureActivity.loads.isNotEmpty() }
+        var old: WebView? = null
+        var client: android.webkit.WebViewClient? = null
+        ui { old = activity.findViewById(R.id.browser); client = old!!.webViewClient }
+        Thread.sleep(15_000)
+        ui { client!!.onPageStarted(old!!, "https://a.fixture.test/redirected", null) }
+        waitFor("first navigation cannot renew binding deadline", 20_000) { status(activity).contains("超时") }
+        assertNull(binding())
+        ui {
+            client!!.onPageCommitVisible(old!!, "https://a.fixture.test/redirected")
+            client!!.onPageFinished(old!!, "https://a.fixture.test/redirected")
+        }
+        assertNull(binding())
+        FixtureActivity.pageWait = null
+        latch.countDown()
+        submit(activity, "b.fixture.test")
+        waitFor("retry B after timeout") { binding() == "https://b.fixture.test/" }
     }
 }

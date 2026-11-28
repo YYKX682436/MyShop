@@ -243,7 +243,8 @@ open class ShopActivity : Activity() {
                 committed = false
                 finished = false
                 pageReady = false
-                scheduleTimeout(token, url)
+                // First binding has one deadline across redirects, rather than a fresh budget per hop.
+                if (bound != null) scheduleTimeout(token, url)
             }
 
             override fun onPageCommitVisible(view: WebView, url: String) {

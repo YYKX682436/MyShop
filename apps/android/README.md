@@ -41,6 +41,6 @@ adb -s "$serial" install -r apps/android/app/build/outputs/apk/androidTest/debug
 adb -s "$serial" shell am instrument -w aikayun.muchen.shop.phase1test.test/android.test.InstrumentationTestRunner
 ```
 
-目前 13 项测试覆盖严格协议与 IDN、真实中央接口、失败 A 后绑定 B、子资源失败、受控外站授权切换、页面/历史/存储保留、撤权与网络失败重试、过期授权和页面回调、跨域首载/POST、自定义协议、首载后台/旋转、输入和拒绝页返回前台后的可用性。生产已登录账号、生产外站许可和生产撤权不因受控测试而视为已验收。
+目前 14 项测试覆盖严格协议与 IDN、真实中央接口、失败 A 后绑定 B、子资源失败、受控外站授权切换、页面/历史/存储保留、撤权与网络失败重试、过期授权和页面回调、跨域首载/POST、自定义协议、首载后台/旋转、首载跨导航总超时、输入和拒绝页返回前台后的可用性。生产已登录账号、生产外站许可和生产撤权不因受控测试而视为已验收。
 
 实现依据：[WebViewClient 回调语义](https://developer.android.com/reference/android/webkit/WebViewClient)、[WebView 生命周期管理](https://developer.android.com/develop/ui/views/layout/webapps/managing-webview)、[AGP 9.3 稳定工具链兼容性](https://developer.android.com/build/releases/agp-9-3-0-release-notes)。
