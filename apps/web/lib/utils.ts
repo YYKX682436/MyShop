@@ -27,6 +27,7 @@ export function detectPaymentDevice(): string {
   const ua = navigator.userAgent.toLowerCase()
   if (ua.includes('micromessenger')) return 'wechat'
   if (ua.includes('alipayclient') || ua.includes('alipay')) return 'alipay'
+  if (/aikayunshop\/\d/i.test(ua)) return 'mobile'
   if (/android|iphone|ipad|ipod|mobile/i.test(ua)) return 'mobile'
   return 'pc'
 }

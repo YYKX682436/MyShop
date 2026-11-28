@@ -1,46 +1,52 @@
-# MyShop Android · 第一阶段
+# MyShop Android · 第二阶段
 
-从已验收的清理提交 `1eece2d3aad77a111876c8e6379a74577a2162d5` 新建的 Kotlin 原生工程。
-只提供输入商城网址、中央授权、单 WebView、成功绑定、系统返回和错误重试。
+正式包 `aikayun.muchen.shop`，艾卡云 `1.0.1 (2)`。最低 **Android 12 / API 31**（第一阶段是 API 26）；targetSdk 保持 36，compileSdk 37。
 
-- 正式包：`aikayun.muchen.shop`，`1.0.1 (1)`；Android 8.0 / API 26 起。
-- 中央服务默认 `https://mc.mc520.top`，仅构建参数 `-PauthorityOrigin=https://authority.example` 可替换。
-- 不维护客户端域名许可名单，不读取品牌，不增加原生桥。
-- 仅声明 `INTERNET`，关闭云备份和设备迁移。清除应用数据或卸载后才能重新绑定。
-- 主文档需同源、授权有效、`onPageCommitVisible` 与 `onPageFinished` 均完成，并通过可视状态回调，才同步保存绑定。错误、取消、超时均销毁当前候选实例，使旧回调失效。
-- 已绑定时 `onStart` 是授权复查唯一入口；网络失败保留隐藏实例，允许后恢复原页面。明确拒绝销毁实例但保留绑定。
-- 旋转在 Activity 内处理；后台中的未绑定候选会取消，返回后需重新确认。
-- JavaScript、DOM Storage 和普通 Cookie 保留；同源链接留在 WebView，外部 HTTPS GET 交系统浏览器，跨域 POST/自定义协议提示不支持。
-- 30 秒页面超时；授权请求连接 10 秒、读取 15 秒，不跟随 API 重定向，响应最多 64 KiB。
+本轮包含 P2 悬浮顶栏/七项菜单、P3 固定 Adaptive Icon/输入页/动态商城品牌/进入过渡、P6 edge-to-edge 与 IME、安全区、P7 完整电脑模式，以及输入错误、旧实例覆盖绑定和应用名修复。P4/P5、支付、定位、更新中心、下载桥均未接入；没有增加媒体、相机或定位权限。
 
-## 本机构建与正式签名
+## 授权和生命周期
 
-使用稳定的 AGP 9.3.2、Gradle 9.6.0、SDK 36 / Build Tools 36.0.0、JDK 17 或兼容的稳定 JDK。本轮使用 JDK 25.0.4.1。
-不修改网站依赖，不触发网站发布。
+保留第一阶段 `requestId / viewId / documentId`、candidate/bound 分离、严格 resolve 协议和同源策略。主文档授权有效、commit/finish 与可视回调完成后才提交绑定；写入前再检查现存绑定。onStart 同步持久化绑定，入口 singleTask 进一步收敛重复入口。清除应用数据仍可重新绑定；覆盖升级不清数据。
+
+ComponentActivity 与一个 Compose 根宿主管理唯一 WebView 的挂载。Activity 是销毁的唯一所有者，从实际 parent 拆下后销毁。重组、菜单、顶栏显隐、授权复查遮罩不创建 WebView、不调用 loadUrl；后台复查网络失败保留原实例与输入，明确拒绝隔离销毁。普通导航无全屏开屏/进度条。返回先关菜单，再用 WebView 历史，根页面退出。分享/浏览器/复制读取当前完整 URL；回首页仅在该次首页绘制成功后清历史。
+
+## 玻璃、品牌和输入
+
+固定使用 Maven Central `io.github.neoruaa.glasmio:glasmio-ui:0.1.4`，对应 `v0.1.4 / 5be4af46778c7e5fb36d6f4e74d52dbf135c3fbf`。通过公开 `rememberLayerBackdrop(onDraw)`、`glassBackdropSource`、`trackBackdropPosition`、`GlasmioBackdropProvider` 接入真实 WebView，GlassSurface/RegularSmall、GlasmioIconButton、GlasmioMenu/Item 提供材质、按压和菜单动画。
+
+真实网页继续硬件绘制；另用 WebView.draw(Canvas) 在当前 scrollX/Y 的正确坐标裁剪顶部小范围，0.4 倍采样，合并内容变化、最多 15 fps。顶栏时截 156dp，菜单时扩大到 560dp（包含模糊外扩），不采窗口、不采原生顶栏、不抓 HTML 长页。每帧使用新 Bitmap，身份/尺寸变化失效；隐藏、遮罩、静止和后台停止采样。Android 12/12L 使用库内简化效果，完整折射需要 Android 13+；真机范围见交付报告。
+
+系统字体和原创云/卡片矢量图标，固定 launcher 前景/背景/单色层。MYSHOP 优先使用 resolve 品牌；EXTERNAL 从授权首页补品牌，失败用域名/默认图标。HTTPS 图标使用成熟 AndroidSVG/BitmapFactory 解码，最多 512KiB、连接/读取各 5 秒、96px 输出。缓存按 canonical origin 隔离，只有匹配正式绑定才写长期缓存，品牌不能充当授权。输入页支持域名/完整 HTTPS 地址和键盘进入，错误保留输入；动画由 Compose 系统时长设置控制，不参与绑定判定。
+
+## 安全区和电脑模式
+
+MyShop WebView 接收系统原生 insets，ComposeView 不提前消费；CSS env 处理系统栏/挖孔，WebView visualViewport 处理 IME。额外顶栏间距并入网站唯一 viewport 脚本，按实际 viewport CSS 宽度 / WebView dp 宽度换算，显隐不改正文布局。客服、购买区的既有 env/visualViewport 机制保留。授权外站采用稳定原生安全边距并将已处理系统 inset 置零继续传递，只有其 viewport 由原生最小兼容脚本管理。
+
+电脑模式按绑定站点保存，复用 WebView、Cookie、历史和当前 URL。桌面 UA 保留真实 Chromium 版本；有 USER_AGENT_METADATA 时同步 mobile/platform 等信息，无特性则只降级 UA。手机与电脑 UA 都含 `AikayunShop/1.0.1`；该标记只供显示和付款设备判断，不授予身份或权限。稳定 GET 页面切换只 reload 一次；POST/未知方法或加载中拒绝切换，WebView 表单重发明确取消。MYSHOP 采用 1280 CSS px、桌面断点和双指缩放，恢复手机时恢复原 UA/元数据与 device-width。
+
+原生只向当前授权的精确 origin 顶层文档注入 `{version, origin, desktop, topBarDp, containerWidthDp}` 和显示事件，优先 document-start，不含尾斜杠；持久化和授权契约仍使用带斜杠 canonical origin。无 JS→native 权限方法，安全区/键盘不另造桥。普通浏览器继续原逻辑。
+
+## 构建、签名和验证
+
+AGP 9.4.1、Gradle 9.6.0、JDK 21、内置 Kotlin、Compose compiler 2.4.21、BOM 2026.09.00。直接消费发布 AAR，无需 NDK/CMake。Release 开启 R8 和资源压缩；[第三方归属](third_party/README.md) 同时打进 APK。
 
 ```sh
 export ANDROID_HOME="$HOME/Library/Android/sdk"
+export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
 python3 apps/android/scripts/build-release.py
 ```
 
-签名脚本读取本机 `~/Downloads/Android App正式签名密钥/MUCHEN.jks` 和对应的 `签名密钥密码.env`，验证现有 JKS 的唯一 alias，凭据只通过子进程环境传递，不写入 Gradle 或仓库，不创建密钥。可用 `MYSHOP_KEYSTORE`、`MYSHOP_CREDENTIAL_FILE`、`MYSHOP_STORE_PASSWORD`、`MYSHOP_KEY_PASSWORD` 指定其他本机配置。
-
-输出：`dist/android/aikayun-1.0.1-1-base-release.apk`。脚本执行 Release Lint、签名验证及 ZIP 对齐检查。最终验收记录与 APK 一起保留在 `dist/android/`。
-
-## 针对性真机测试
-
-`debug` 使用独立包名 `aikayun.muchen.shop.phase1test`，不会覆盖正式包。`FixtureActivity` 仅位于 debug 源集；它用受控响应测试撤权、错误、页面加载与存储，不修改生产授权规则。为适配本轮 MIUI 的后台 Activity 启动限制，测试通过 shell 启动 debug 专用 Activity，因此该 Activity 只在 debug 包中导出。release 仅包含正式入口，没有测试页面或授权旁路。
-
-测试使用 SDK 自带的 instrumentation / JUnit 兼容库，无额外测试框架依赖。执行前明确选择一台设备：
+沿用本机 `~/Downloads/Android App正式签名密钥/MUCHEN.jks` 及现有密码读取方式。脚本读取 Gradle 版本生成唯一产物 `dist/android/aikayun-1.0.1-2-shell-release.apk`，执行 Release Lint、正式签名、签名与 16KiB ZIP 对齐校验。密码通过子进程环境传递，不入 Git，不创建密钥。交付报告为 `dist/android/phase2-acceptance.txt`，必要证据在 `dist/android/phase2-evidence/`。
 
 ```sh
 apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest :app:lintRelease
-serial=feb70d35
-adb -s "$serial" install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
-adb -s "$serial" install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb -s "$serial" shell am instrument -w aikayun.muchen.shop.phase1test.test/android.test.InstrumentationTestRunner
+adb -s feb70d35 install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+adb -s feb70d35 install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s feb70d35 shell am instrument -w -e class aikayun.muchen.shop.PhaseOneTest aikayun.muchen.shop.phase1test.test/android.test.InstrumentationTestRunner
+node apps/web/scripts/test-app-display.mjs
+pnpm --dir apps/web test:logic
 ```
 
-目前 14 项测试覆盖严格协议与 IDN、真实中央接口、失败 A 后绑定 B、子资源失败、受控外站授权切换、页面/历史/存储保留、撤权与网络失败重试、过期授权和页面回调、跨域首载/POST、自定义协议、首载后台/旋转、首载跨导航总超时、输入和拒绝页返回前台后的可用性。生产已登录账号、生产外站许可和生产撤权不因受控测试而视为已验收。
+debug 使用独立 `aikayun.muchen.shop.phase1test`，fixture Activity 和实际网站 viewport 测试资产仅在 debug。显式指定测试类避免旧 SDK runner 扫描全部 Compose 依赖。保留第一阶段所有授权/旧回调/失败/超时/存储断言；手工回调测试只证明状态隔离，不冒充真实网络。新增实际 WebView 采样、静止停止、可见输入错误、绑定竞争、真实点击后的模式/历史/剪贴板、POST 不重发、旋转重启和实际 PNG/SVG 读取测试。没有生产登录/外站授权/撤权条件的项目继续 NOT_VERIFIED。
 
-实现依据：[WebViewClient 回调语义](https://developer.android.com/reference/android/webkit/WebViewClient)、[WebView 生命周期管理](https://developer.android.com/develop/ui/views/layout/webapps/managing-webview)、[AGP 9.3 稳定工具链兼容性](https://developer.android.com/build/releases/agp-9-3-0-release-notes)。
+网页实际变更通过仓库唯一入口 `bash scripts/release-production.sh` 发布；Android 自身不需服务器部署。最终正式包用 `adb -s feb70d35 install -r`，不卸载正式包。

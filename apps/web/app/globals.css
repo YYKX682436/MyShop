@@ -1763,3 +1763,14 @@ dialog.media-manage-dialog::backdrop {
 
 /* Keep one keyboard-scrollable region around table components with their own wrapper. */
 .admin-table-scroll > div { min-width: 0; overflow: visible; }
+
+/* Native shell spacing is stable while its floating toolbar hides/reappears. System insets stay CSS env. */
+html[data-aikayun-shell="1"] {
+  scroll-padding-top: calc(env(safe-area-inset-top, 0px) + var(--aikayun-topbar-gap, 0px) + 1rem);
+}
+html[data-aikayun-shell="1"] .storefront-main--without-header {
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--aikayun-topbar-gap, 0px) + 1rem);
+}
+html[data-aikayun-shell="1"] .admin-header-layer {
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--aikayun-topbar-gap, 0px) + 0.75rem);
+}

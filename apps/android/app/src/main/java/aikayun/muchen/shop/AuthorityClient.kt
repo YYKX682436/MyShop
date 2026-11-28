@@ -6,8 +6,10 @@ import java.net.URL
 import java.net.URLEncoder
 import java.io.IOException
 
+data class SiteBrand(val name: String? = null, val iconUrl: String? = null)
+
 sealed class Authorization {
-    data object Allowed : Authorization()
+    data class Allowed(val siteType: String = "myshop", val brand: SiteBrand? = null) : Authorization()
     data class Denied(val reason: String) : Authorization()
     data class Failed(val message: String) : Authorization()
 }
@@ -28,7 +30,11 @@ object ResolveProtocol {
             return Authorization.Denied(reason)
         }
         require(data.opt("site_type") is String && data.getString("site_type") in setOf("myshop", "external")) { "站点类型无效" }
-        return Authorization.Allowed
+        val brand = data.optJSONObject("brand")?.let { value ->
+            fun optional(key: String, limit: Int) = (value.opt(key) as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= limit }
+            SiteBrand(optional("site_name", 160), optional("favicon_url", 2048))
+        }
+        return Authorization.Allowed(data.getString("site_type"), brand)
     }
 }
 

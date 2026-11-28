@@ -18,7 +18,11 @@ import java.util.concurrent.TimeUnit
 class PhaseOneTest : InstrumentationTestCase() {
     private var current: ShopActivity? = null
     private val context get() = instrumentation.targetContext
-    private fun ui(action: () -> Unit) = instrumentation.runOnMainSync(action)
+    private fun ui(action: () -> Unit) {
+        var failure: Throwable? = null
+        instrumentation.runOnMainSync { try { action() } catch (error: Throwable) { failure = error } }
+        failure?.let { throw it }
+    }
     private fun waitFor(message: String, timeout: Long = 12_000, condition: () -> Boolean) {
         val end = System.currentTimeMillis() + timeout
         while (System.currentTimeMillis() < end) {
@@ -46,7 +50,7 @@ class PhaseOneTest : InstrumentationTestCase() {
         activity.findViewById<Button>(R.id.confirm).performClick()
     }
     private fun visible(activity: Activity) = activity.findViewById<WebView>(R.id.browser)?.visibility == View.VISIBLE
-    private fun status(activity: Activity) = activity.findViewById<TextView>(R.id.status).text.toString()
+    private fun status(activity: Activity) = activity.findViewById<TextView>(R.id.status)?.text?.toString() ?: ""
     private fun script(activity: Activity, js: String): String {
         val latch = CountDownLatch(1)
         var result = ""
@@ -77,7 +81,7 @@ class PhaseOneTest : InstrumentationTestCase() {
         val origin = "https://allowed.fixture.test/"
         fun parse(data: String) = ResolveProtocol.parse("""{"code":0,"data":$data}""", origin)
         assertEquals(Authorization.Denied("unavailable"), parse("""{"schema_version":1,"allowed":false,"canonical_origin":"$origin","reason":"unavailable"}"""))
-        assertEquals(Authorization.Allowed, parse("""{"schema_version":1,"allowed":true,"canonical_origin":"$origin","site_type":"external"}"""))
+        assertEquals(Authorization.Allowed("external"), parse("""{"schema_version":1,"allowed":true,"canonical_origin":"$origin","site_type":"external"}"""))
         val invalid = listOf(
             """{"schema_version":2,"allowed":true,"canonical_origin":"$origin","site_type":"myshop"}""",
             """{"schema_version":1,"allowed":"true","canonical_origin":"$origin","site_type":"myshop"}""",
@@ -157,7 +161,7 @@ class PhaseOneTest : InstrumentationTestCase() {
         ui { activity.findViewById<Button>(R.id.confirm).performClick() }
         waitFor("network distinct") { status(activity).contains("无法连接") }
         assertFalse(visible(activity))
-        FixtureActivity.result = Authorization.Allowed
+        FixtureActivity.result = Authorization.Allowed()
         ui { activity.findViewById<Button>(R.id.confirm).performClick() }
         waitFor("recover") { visible(activity) }
         assertEquals("https://b.fixture.test/", binding())
@@ -290,8 +294,8 @@ class PhaseOneTest : InstrumentationTestCase() {
     }
     fun testLiveCentralAuthorityContract() {
         val client = AuthorityClient()
-        assertEquals(Authorization.Allowed, client.resolve("https://mc.mc520.top/"))
-        assertEquals(Authorization.Allowed, client.resolve("https://520.mc520.top/"))
+        assertTrue(client.resolve("https://mc.mc520.top/") is Authorization.Allowed)
+        assertTrue(client.resolve("https://520.mc520.top/") is Authorization.Allowed)
         assertEquals(Authorization.Denied("not_authorized"), client.resolve("https://mc520.top.evil.example/"))
         assertEquals(Authorization.Denied("not_authorized"), client.resolve("https://example.com/"))
         assertEquals(Authorization.Denied("site_unavailable"), client.resolve("https://unregistered-phase1.mc520.top/"))
@@ -320,4 +324,238 @@ class PhaseOneTest : InstrumentationTestCase() {
         submit(activity, "b.fixture.test")
         waitFor("retry B after timeout") { binding() == "https://b.fixture.test/" }
     }
+    fun testGlassCaptureMatchesLiveWebViewAndStopsWhenStill() {
+        val activity = launch()
+        submit(activity, "b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        val field = ShopActivity::class.java.getDeclaredField("glassSource").apply { isAccessible = true }
+        val source = field.get(activity) as WebGlassSource
+        script(activity, "window.scrollTo(0,document.querySelector('.color').offsetTop+50); 'ok'")
+        Thread.sleep(1000)
+        ui {
+            val bmp = source.frame?.bitmap
+            instrumentation.sendStatus(0, android.os.Bundle().apply { putString("probe", "captures=${source.captures} size=${bmp?.width}x${bmp?.height} pixel=${bmp?.getPixel(10,10)} scroll=${activity.findViewById<WebView>(R.id.browser).scrollY}") })
+            bmp?.let { java.io.File(context.getExternalFilesDir(null), "glass-source.png").outputStream().use { out -> it.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out) } }
+        }
+        waitFor("capture must contain actual red WebView pixels") {
+            source.frame?.bitmap?.let { android.graphics.Color.red(it.getPixel(10,10)) > 210 && android.graphics.Color.green(it.getPixel(10,10)) in 60..170 } == true
+        }
+        Thread.sleep(500)
+        val before = source.captures
+        Thread.sleep(1000)
+        assertTrue("Static page must not drive a snapshot loop: ${source.captures - before}", source.captures - before <= 1)
+        val appearanceField = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible = true }
+        val appearance = appearanceField.get(activity) as ShellAppearance
+        ui { appearance.menu = true }
+        waitFor("menu must expand the sampled strip") { (source.frame?.height ?: 0) > 1000 }
+        Thread.sleep(500)
+        val screenshot = instrumentation.uiAutomation.takeScreenshot()
+        val file = java.io.File(context.getExternalFilesDir(null), "glass-probe.png")
+        file.outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        source.frame!!.bitmap.let { bmp -> java.io.File(context.getExternalFilesDir(null), "glass-source.png").outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+        ui { appearance.menu = false }
+    }
+
+    fun testInvalidInputIsVisibleAndEditable() {
+        val activity = launch()
+        submit(activity, "http://invalid.example")
+        waitFor("visible invalid error") { activity.findViewById<TextView>(R.id.status)?.visibility == View.VISIBLE && status(activity).contains("HTTPS") }
+        ui { assertTrue(activity.findViewById<EditText>(R.id.origin_input).isEnabled); assertTrue(activity.findViewById<Button>(R.id.confirm).isEnabled) }
+        assertNull(binding())
+        submit(activity, "b.fixture.test")
+        waitFor("valid retry") { visible(activity) && binding() == "https://b.fixture.test/" }
+    }
+
+    fun testPersistedBindingWinsBeforeVisualCommitAndOnStart() {
+        val activity = launch()
+        val latch = CountDownLatch(1)
+        FixtureActivity.pageWait = latch
+        submit(activity, "a.fixture.test")
+        waitFor("candidate A loads") { FixtureActivity.loads.isNotEmpty() }
+        context.getSharedPreferences("binding", Context.MODE_PRIVATE).edit().putString("origin", "https://b.fixture.test/").commit()
+        FixtureActivity.pageWait = null; latch.countDown()
+        waitFor("persisted B must win") { visible(activity) && activity.findViewById<WebView>(R.id.browser)?.url == "https://b.fixture.test/" }
+        assertEquals("https://b.fixture.test/", binding())
+        ui { instrumentation.callActivityOnStop(activity) }
+        context.getSharedPreferences("binding", Context.MODE_PRIVATE).edit().putString("origin", "https://c.fixture.test/").commit()
+        ui { instrumentation.callActivityOnStart(activity) }
+        waitFor("onStart must synchronize saved C") { visible(activity) && activity.findViewById<WebView>(R.id.browser)?.url == "https://c.fixture.test/" }
+        assertEquals("https://c.fixture.test/", binding())
+    }
+
+    private fun action(activity: ShopActivity, item: Int) = ui {
+        ShopActivity::class.java.getDeclaredMethod("menuAction", Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, item)
+    }
+
+    fun testDesktopViewportRoundTripHistoryStorageAndClipboard() {
+        val activity = launch()
+        submit(activity, "b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        script(activity, "localStorage.setItem('mode','preserved');document.cookie='mode=preserved;secure;samesite=lax';document.querySelector('a').href='/second?q=ok#anchor'")
+        Thread.sleep(500) // wait for the first-entry transition's blocking overlay to leave
+        val rect = org.json.JSONArray(script(activity, "(()=>{const r=document.querySelector('a').getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2,innerWidth]})()"))
+        var x = 0f; var y = 0f
+        ui {
+            val view = activity.findViewById<WebView>(R.id.browser)
+            val location = IntArray(2); view.getLocationOnScreen(location)
+            val scale = view.width / rect.getDouble(2)
+            x = (location[0] + rect.getDouble(0) * scale).toFloat(); y = (location[1] + rect.getDouble(1) * scale).toFloat()
+        }
+        val time = android.os.SystemClock.uptimeMillis()
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time,android.view.MotionEvent.ACTION_DOWN,x,y,0))
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(time,time+80,android.view.MotionEvent.ACTION_UP,x,y,0))
+        waitFor("GET second") { activity.findViewById<WebView>(R.id.browser)?.url?.contains("/second?q=ok#anchor") == true && activity.findViewById<WebView>(R.id.browser).progress == 100 }
+        Thread.sleep(300)
+        val before = FixtureActivity.loads.size
+        var browser: WebView? = null
+        ui { browser = activity.findViewById(R.id.browser) }
+        action(activity, 6)
+        waitFor("one reload") { FixtureActivity.loads.size == before + 1 && browser!!.progress == 100 }
+        assertEquals("1280", script(activity, "document.documentElement.clientWidth"))
+        assertEquals("true", script(activity, "matchMedia('(min-width: 1024px)').matches"))
+        assertEquals("false", script(activity, "navigator.userAgentData.mobile"))
+        assertEquals("true", script(activity, "navigator.userAgent.includes('AikayunShop/') && !navigator.userAgent.includes(' Mobile')"))
+        assertTrue(script(activity, "document.cookie").contains("mode=preserved"))
+        assertEquals("\"preserved\"", script(activity, "localStorage.getItem('mode')"))
+        waitFor("history becomes available after reload commits") { browser!!.canGoBack() }
+        ui { assertSame(browser, activity.findViewById(R.id.browser)); assertTrue("current URL preserved: ${browser!!.url}", browser!!.url!!.endsWith("/second?q=ok#anchor")); assertTrue("history preserved: ${browser!!.copyBackForwardList().size}", browser!!.canGoBack()) }
+        action(activity, 5)
+        ui { assertEquals("https://b.fixture.test/second?q=ok#anchor", (activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip!!.getItemAt(0).text.toString()) }
+        action(activity, 6)
+        waitFor("mobile reload") { FixtureActivity.loads.size == before + 2 && browser!!.progress == 100 }
+        assertTrue(script(activity, "document.documentElement.clientWidth").toInt() < 600)
+        assertEquals("true", script(activity, "navigator.userAgentData.mobile"))
+        assertEquals("true", script(activity, "window.__AIKAYUN_DISPLAY__.desktop===false"))
+        action(activity, 2)
+        waitFor("homepage returns and clears earlier history only on success") { browser!!.url == "https://b.fixture.test/" && browser!!.progress == 100 && !browser!!.canGoBack() }
+        val count = FixtureActivity.loads.size
+        action(activity, 2)
+        Thread.sleep(200)
+        assertEquals(count, FixtureActivity.loads.size)
+    }
+
+    fun testOptionalBrandCannotInvalidateValidAuthorization() {
+        val origin = "https://b.fixture.test/"
+        val malformed = ResolveProtocol.parse("""{"code":0,"data":{"schema_version":1,"allowed":true,"canonical_origin":"$origin","site_type":"myshop","brand":{"site_name":42,"favicon_url":[]}}}""", origin)
+        assertEquals(Authorization.Allowed("myshop", SiteBrand()), malformed)
+        val activity = launch()
+        FixtureActivity.result = Authorization.Allowed("external")
+        submit(activity, "b.fixture.test")
+        waitFor("external brand fallback") { visible(activity) }
+        val field = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible = true }
+        val state = field.get(activity) as ShellAppearance
+        waitFor("homepage title and SVG favicon") { state.title == "Fixture Store" && state.icon != null }
+        script(activity, "location.href='/second'")
+        waitFor("second") { activity.findViewById<WebView>(R.id.browser)?.url?.endsWith("/second") == true }
+        script(activity, "document.title='Product name'")
+        assertEquals("Fixture Store", state.title)
+    }
+
+    fun testPostModeSwitchDoesNotResendAndDesktopPersistsAcrossRestartRotation() {
+        val activity = launch()
+        submit(activity, "b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        ui { activity.findViewById<WebView>(R.id.browser).postUrl("https://b.fixture.test/posted", "draft=retained".toByteArray()) }
+        waitFor("POST document ready") { activity.findViewById<WebView>(R.id.browser)?.url?.endsWith("/posted") == true && activity.findViewById<WebView>(R.id.browser).progress == 100 }
+        Thread.sleep(200)
+        val count = FixtureActivity.loads.size
+        action(activity, 6)
+        Thread.sleep(300)
+        assertEquals(count, FixtureActivity.loads.size)
+        assertFalse(context.getSharedPreferences("binding", Context.MODE_PRIVATE).getBoolean("desktop:https://b.fixture.test/", false))
+        ui { activity.findViewById<WebView>(R.id.browser).loadUrl("https://b.fixture.test/second") }
+        waitFor("GET ready") { activity.findViewById<WebView>(R.id.browser)?.url?.endsWith("/second") == true && activity.findViewById<WebView>(R.id.browser).progress == 100 }
+        Thread.sleep(200)
+        action(activity, 6)
+        waitFor("desktop saved") { context.getSharedPreferences("binding", Context.MODE_PRIVATE).getBoolean("desktop:https://b.fixture.test/", false) }
+        var browser: WebView? = null
+        ui { browser = activity.findViewById(R.id.browser); activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        waitFor("landscape") { activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+        ui { assertSame(browser, activity.findViewById(R.id.browser)); activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        waitFor("portrait") { activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
+        ui { activity.finish() }
+        instrumentation.waitForIdleSync()
+        val restarted = launch()
+        waitFor("desktop restart") { visible(restarted) }
+        assertEquals("1280", script(restarted, "document.documentElement.clientWidth"))
+        assertTrue(script(restarted, "navigator.userAgent").contains("AikayunShop/"))
+    }
+
+    fun testLivePngAndDefaultSvgDecodeAreBounded() {
+        val brands = SiteBrands(context.getSharedPreferences("decode-test", Context.MODE_PRIVATE))
+        val svg = brands.icon("https://mc.mc520.top/", "/default-icon.svg")
+        val png = brands.icon("https://mc.mc520.top/", "/images/telegram.png")
+        assertNotNull("production default SVG", svg)
+        assertNotNull("production PNG", png)
+        assertEquals(96, svg!!.width); assertEquals(96, png!!.width)
+        assertNull(brands.icon("https://mc.mc520.top/", "/missing-phase2-icon.png"))
+    }
+
+    private fun screenshot(name: String) {
+        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        java.io.File(context.getExternalFilesDir(null), name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) }
+    }
+
+    fun testNativeInputRealImePreservesTextAndInsets() {
+        val activity = launch()
+        waitFor("input mounted") { activity.findViewById<EditText>(R.id.origin_input) != null }
+        val dark = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        Thread.sleep(600) // allow the system splash and first Compose frame to finish
+        screenshot(if(dark) "input-dark.png" else "input-light.png")
+        ui {
+            val input = activity.findViewById<EditText>(R.id.origin_input)
+            input.setText("unfinished.example");input.requestFocus()
+            (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
+        waitFor("real input method visible") { activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true }
+        Thread.sleep(300)
+        screenshot(if(dark) "input-keyboard-dark.png" else "input-keyboard.png")
+        ui {
+            val button = activity.findViewById<Button>(R.id.confirm)
+            val rect = android.graphics.Rect();assertTrue(button.getGlobalVisibleRect(rect))
+            val bottom = activity.window.decorView.height - activity.window.decorView.rootWindowInsets.getInsets(android.view.WindowInsets.Type.ime()).bottom
+            assertTrue("confirm above keyboard", rect.bottom <= bottom + 1)
+            val input = activity.findViewById<EditText>(R.id.origin_input)
+            (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(input.windowToken,0)
+        }
+        waitFor("IME closes") { !activity.window.decorView.rootWindowInsets.isVisible(android.view.WindowInsets.Type.ime()) }
+        ui { assertEquals("unfinished.example", activity.findViewById<EditText>(R.id.origin_input).text.toString()) }
+    }
+
+    private fun gesture(x: Float, from: Float, to: Float) {
+        val start = android.os.SystemClock.uptimeMillis()
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(start,start,android.view.MotionEvent.ACTION_DOWN,x,from,0))
+        for(i in 1..10) {
+            Thread.sleep(25)
+            instrumentation.sendPointerSync(android.view.MotionEvent.obtain(start,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_MOVE,x,from+(to-from)*i/10,0))
+        }
+        instrumentation.sendPointerSync(android.view.MotionEvent.obtain(start,android.os.SystemClock.uptimeMillis(),android.view.MotionEvent.ACTION_UP,x,to,0))
+    }
+
+    fun testInternalScrollHidesAndRecallsWithoutReloadAndProgrammaticScrollIsIgnored() {
+        val activity = launch()
+        submit(activity, "b.fixture.test")
+        waitFor("bind") { visible(activity) }
+        Thread.sleep(500)
+        val state = ShopActivity::class.java.getDeclaredField("appearance").apply { isAccessible=true }.get(activity) as ShellAppearance
+        var browser: WebView?=null;var width=0f
+        ui { browser=activity.findViewById(R.id.browser); width=browser!!.width.toFloat() }
+        val r=org.json.JSONArray(script(activity,"(()=>{const r=document.querySelector('.internal').getBoundingClientRect();return [r.y,innerWidth]})()"))
+        val scale=width/r.getDouble(1)
+        val x=width/2;val from=((r.getDouble(0)+300)*scale).toFloat();val to=((r.getDouble(0)+80)*scale).toFloat()
+        gesture(x,from,to)
+        waitFor("internal user scroll hides toolbar") { !state.toolbar }
+        Thread.sleep(300) // compositor scroll updates follow the observed input events
+        assertTrue("inner container actually scrolled",script(activity,"document.querySelector('.internal').scrollTop").toDouble()>0)
+        gesture(x,to,from)
+        waitFor("reverse gesture recalls toolbar") { state.toolbar }
+        val count=FixtureActivity.loads.size
+        script(activity,"scrollTo(0,document.querySelector('.color').offsetTop+50)")
+        Thread.sleep(200)
+        assertTrue(state.toolbar)
+        repeat(3) { ui{state.menu=true};Thread.sleep(180);ui{state.menu=false};Thread.sleep(180) }
+        ui { assertSame(browser,activity.findViewById(R.id.browser)) }
+        assertEquals(count,FixtureActivity.loads.size)
+    }
+
 }

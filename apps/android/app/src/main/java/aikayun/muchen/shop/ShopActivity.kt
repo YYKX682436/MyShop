@@ -1,7 +1,13 @@
 package aikayun.muchen.shop
 
 import android.annotation.SuppressLint
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.core.view.WindowCompat
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -19,7 +25,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 /** Activity owns exactly one WebView; request/view identities make abandoned callbacks inert. */
-open class ShopActivity : Activity() {
+open class ShopActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private var request: Future<*>? = null
@@ -31,14 +37,27 @@ open class ShopActivity : Activity() {
     private var candidate: String? = null
     private var bound: String? = null
     private var retryUrl: String? = null
-    private var web: WebView? = null
+    private var web by mutableStateOf<WebView?>(null)
+    private val appearance = ShellAppearance()
+    private val glassSource = WebGlassSource()
+    private var display: AppDisplay? = null
+    private var siteType = "myshop"
+    private var homeClearPending = false
+    private var homeDocument = -1L
+    private var mainMethod = "GET"
+    private var brandGeneration = 0L
+    private val brandExecutor = Executors.newSingleThreadExecutor()
+    private val brands by lazy { SiteBrands(getSharedPreferences("brands", MODE_PRIVATE)) }
+    private var activeBrand: SiteBrand? = null
+    private var brandOrigin: String? = null
+    private var discoveryDocument = -1L
+    private var appearanceCheck: Runnable? = null
     private var documentUrl: String? = null
     private var documentId = 0L
     private var committed = false
     private var finished = false
     private var pageReady = false
     private var deadline: Runnable? = null
-    private lateinit var root: FrameLayout
     private lateinit var gate: LinearLayout
     private lateinit var input: EditText
     private lateinit var status: TextView
@@ -52,23 +71,16 @@ open class ShopActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bound = preferences.getString("origin", null)
-        root = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
-        setContentView(root)
-        root.setOnApplyWindowInsetsListener { view, insets ->
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                val safe = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
-                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
-            } else {
-                @Suppress("DEPRECATION")
-                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
-            }
-            insets
-        }
+        restoreBrand(bound)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        window.isNavigationBarContrastEnforced = false
         gate = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(28), dp(24), dp(28), dp(24))
-            setBackgroundColor(Color.WHITE)
+            setPadding(0, 0, 0, 0)
+            setBackgroundColor(Color.TRANSPARENT)
         }
         input = EditText(this).apply {
             id = R.id.origin_input
@@ -77,22 +89,42 @@ open class ShopActivity : Activity() {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
             setText(savedInstanceState?.getString("input") ?: "")
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            textSize = 16f
+            setPadding(dp(16), 0, dp(16), 0)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
+            setOnEditorActionListener { _, action, event ->
+                if (action == android.view.inputmethod.EditorInfo.IME_ACTION_GO || event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER) { submit(); true } else false
+            }
         }
         status = TextView(this).apply { id = R.id.status; textSize = 15f; setPadding(0, dp(12), 0, dp(12)) }
-        confirm = Button(this).apply { id = R.id.confirm; text = "确认"; setOnClickListener { submit() } }
+        confirm = Button(this).apply { id = R.id.confirm; text = "进入商城"; isAllCaps = false; textSize = 16f; setOnClickListener { submit() } }
         gate.addView(input, LinearLayout.LayoutParams(-1, dp(56)))
         gate.addView(status, LinearLayout.LayoutParams(-1, -2))
-        gate.addView(confirm, LinearLayout.LayoutParams(-1, dp(52)))
-        root.addView(gate, FrameLayout.LayoutParams(-1, -1))
+        gate.addView(confirm, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12) })
+        styleInput()
+        setContentView(ComposeView(this).apply {
+            consumeWindowInsets = false
+            setContent { ShopShell(web, gate, appearance, glassSource, ::menuAction) }
+        })
         showGate(if (bound == null) "" else "正在验证授权…", false)
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { navigateBack() }
-        }
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { navigateBack() }
+        })
     }
 
     override fun onStart() {
         super.onStart()
         foreground = true
+        val persisted = preferences.getString("origin", null)
+        if (persisted != bound) {
+            invalidateRequest()
+            candidate = null
+            retryUrl = null
+            authorized = false
+            destroyWeb()
+            bound = persisted
+            restoreBrand(bound)
+        }
         // Only here, never also in onCreate/onResume. An unbound attempt is not a saved binding.
         bound?.let { checkAuthorization(it) }
     }
@@ -123,7 +155,7 @@ open class ShopActivity : Activity() {
     private fun submit() {
         if (querying || !foreground) return
         val origin = bound ?: OriginPolicy.normalize(input.text.toString())
-        if (origin == null) { status.text = "请输入有效的 HTTPS 商城网址"; return }
+        if (origin == null) { showGate("请输入有效的 HTTPS 商城网址", true); return }
         if (bound == null) {
             candidate = origin
             destroyWeb()
@@ -156,11 +188,15 @@ open class ShopActivity : Activity() {
                 querying = false
                 request = null
                 when (result) {
-                    Authorization.Allowed -> {
+                    is Authorization.Allowed -> {
                         authorized = true
+                        siteType = result.siteType
+                        applyAuthorizedBrand(origin, result.brand)
                         val existing = web
                         if (existing != null && bound != null) {
                             existing.onResume()
+                            display?.update()
+                            if (pageReady) refreshDocumentAppearance(existing, viewId, origin, documentId)
                             if (pageReady) revealWeb() else showGate("正在打开商城…", false)
                         } else openPage(origin, retryUrl ?: origin)
                     }
@@ -188,8 +224,16 @@ open class ShopActivity : Activity() {
     private fun openPage(origin: String, url: String) {
         destroyWeb()
         val token = viewId
+        val mainRequests = java.util.concurrent.ConcurrentHashMap<String, String>()
         pageReady = false
-        val browser = WebView(this)
+        val browser = ObservedWebView(this)
+        glassSource.attach(browser)
+        browser.direction = { show ->
+            if (!appearance.gate && !appearance.menu) {
+                appearance.toolbar = show
+                updateSampling()
+            }
+        }
         web = browser
         browser.id = R.id.browser
         browser.settings.apply {
@@ -202,9 +246,36 @@ open class ShopActivity : Activity() {
             javaScriptCanOpenWindowsAutomatically = false
             mediaPlaybackRequiresUserGesture = true
         }
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+        appearance.desktop = preferences.getBoolean("desktop:$origin", false)
+        display = AppDisplay(browser, origin, siteType == "external").also { it.configure(appearance.desktop) }
+        if (siteType == "external") browser.setOnApplyWindowInsetsListener { view, insets ->
+            val types = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+            val safe = insets.getInsets(types)
+            (view.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+                val top = safe.top + dp(68)
+                if (params.topMargin != top || params.leftMargin != safe.left || params.rightMargin != safe.right || params.bottomMargin != safe.bottom) {
+                    params.setMargins(safe.left, top, safe.right, safe.bottom)
+                    view.layoutParams = params
+                }
+            }
+            WindowInsets.Builder(insets).setInsets(types, android.graphics.Insets.NONE).build()
+        }
+        browser.addOnLayoutChangeListener { _, l, t, r, b, oldL, oldT, oldR, oldB ->
+            if (r-l != oldR-oldL || b-t != oldB-oldT) {
+                glassSource.invalidateFrame()
+                if (authorized && web === browser) display?.update()
+            }
+        }
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(browser, false)
         browser.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedIcon(view: WebView, icon: android.graphics.Bitmap) {
+                if (web === view && authorized && OriginPolicy.normalize(view.url ?: "") == origin && view.url == origin && activeBrand?.iconUrl.isNullOrBlank()) {
+                    appearance.icon = android.graphics.Bitmap.createScaledBitmap(icon,96,96,true)
+                    cacheBrand(origin)
+                }
+            }
             override fun onShowFileChooser(view: WebView, callback: android.webkit.ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                 callback.onReceiveValue(null)
                 unsupported()
@@ -213,8 +284,40 @@ open class ShopActivity : Activity() {
         }
         browser.setDownloadListener { _, _, _, _, _ -> unsupported() }
         fun live(view: WebView) = token == viewId && web === view
+        browser.interacted = {
+            appearanceCheck?.let(handler::removeCallbacks)
+            val document = documentId
+            appearanceCheck = Runnable {
+                if (live(browser) && foreground && authorized && pageReady && document == documentId) refreshDocumentAppearance(browser, token, origin, document)
+            }.also { handler.postDelayed(it, 180) }
+        }
         browser.webViewClient = object : WebViewClient() {
-            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = interceptResource(request)
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                if (request.isForMainFrame) {
+                    val target = request.url.toString()
+                    mainRequests[target.substringBefore('#')] = request.method
+                    handler.post {
+                        if (live(view) && OriginPolicy.normalize(target) == origin && documentUrl?.substringBefore('#') == target.substringBefore('#')) mainMethod = request.method
+                    }
+                }
+                return interceptResource(request)
+            }
+
+            override fun onFormResubmission(view: WebView, dontResend: android.os.Message, resend: android.os.Message) {
+                dontResend.sendToTarget()
+                Toast.makeText(this@ShopActivity, "已取消表单重新提交，请返回原页面操作", Toast.LENGTH_SHORT).show()
+            }
+
+            override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
+                if (live(view) && authorized) { display?.update(); glassSource.invalidateFrame() }
+            }
+
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                if (live(view)) {
+                    appearance.canBack = view.canGoBack()
+                    if (authorized && pageReady) refreshDocumentAppearance(view, token, origin, documentId)
+                }
+            }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 if (!request.isForMainFrame) return false
@@ -239,10 +342,16 @@ open class ShopActivity : Activity() {
                     return
                 }
                 documentId++
+                glassSource.invalidateFrame()
+                appearance.toolbar = true
+                appearance.menu = false
+                mainMethod = mainRequests[url.substringBefore('#')] ?: "UNKNOWN"
+                if (homeClearPending && url == origin) { homeDocument = documentId; homeClearPending = false }
                 documentUrl = url
                 committed = false
                 finished = false
                 pageReady = false
+                appearance.ready = false
                 // First binding has one deadline across redirects, rather than a fresh budget per hop.
                 if (bound != null) scheduleTimeout(token, url)
             }
@@ -256,6 +365,8 @@ open class ShopActivity : Activity() {
             override fun onPageFinished(view: WebView, url: String) {
                 if (!live(view) || documentUrl != url || OriginPolicy.normalize(url) != origin) return
                 finished = true
+                display?.update()
+                refreshDocumentAppearance(view, token, origin, documentId)
                 finishIfReady(view, token, origin)
             }
 
@@ -278,7 +389,7 @@ open class ShopActivity : Activity() {
                 return true
             }
         }
-        root.addView(browser, 0, FrameLayout.LayoutParams(-1, -1))
+
         showGate("正在打开商城…", false)
         scheduleTimeout(token, url)
         browser.loadUrl(url)
@@ -294,12 +405,28 @@ open class ShopActivity : Activity() {
                 cancelTimeout()
                 // This is the only persistent binding write in the application.
                 if (foreground && authorized && bound == null && candidate == origin) {
+                    val persisted = preferences.getString("origin", null)
+                    if (persisted != null && persisted != origin) {
+                        invalidateRequest()
+                        candidate = null
+                        retryUrl = null
+                        authorized = false
+                        destroyWeb()
+                        bound = persisted
+                        checkAuthorization(persisted)
+                        return
+                    }
                     if (!preferences.edit().putString("origin", origin).commit()) {
                         failPage("无法保存绑定，请重试", origin)
                         return
                     }
                     bound = origin
                     candidate = null
+                    cacheBrand(origin)
+                }
+                if (homeDocument == navigation && view.url == origin && foreground && authorized) {
+                    view.clearHistory()
+                    homeDocument = -1L
                 }
                 if (foreground && authorized) {
                     retryUrl = null
@@ -328,13 +455,18 @@ open class ShopActivity : Activity() {
     }
 
     private fun destroyWeb() {
+        appearanceCheck?.let(handler::removeCallbacks); appearanceCheck = null
+        display?.close(); display = null
+        homeClearPending = false; homeDocument = -1L
+        brandGeneration++
+        glassSource.attach(null)
         cancelTimeout()
         viewId++
         pageReady = false
         documentUrl = null
         web?.let {
             web = null
-            root.removeView(it)
+            (it.parent as? android.view.ViewGroup)?.removeView(it)
             it.stopLoading()
             it.onPause()
             it.destroy()
@@ -343,34 +475,133 @@ open class ShopActivity : Activity() {
 
     private fun showGate(message: String, retry: Boolean) {
         gate.visibility = View.VISIBLE
-        gate.bringToFront()
+        appearance.returning = bound != null && web != null && pageReady
+        appearance.bound = bound != null
+        appearance.busy = !retry && message.isNotEmpty()
+        appearance.ready = false
+        appearance.gate = true
+        appearance.menu = false
+        updateSampling()
         web?.visibility = View.INVISIBLE
         input.visibility = if (bound == null) View.VISIBLE else View.GONE
         input.isEnabled = !querying && retry || (!querying && message.isEmpty())
         status.text = message
         status.visibility = if (message.isEmpty()) View.GONE else View.VISIBLE
-        confirm.text = if (bound != null || retry) "重试" else "确认"
+        confirm.text = if (appearance.busy) "正在进入…" else if (bound != null) "重试" else "进入商城"
         confirm.isEnabled = retry || message.isEmpty()
+        status.setTextColor(if (retry) Color.rgb(200, 55, 65) else if (isDark()) Color.LTGRAY else Color.DKGRAY)
     }
 
     private fun revealWeb() {
         if (!foreground || !authorized) return
         gate.visibility = View.GONE
+        appearance.ready = true
+        appearance.gate = false
+        appearance.toolbar = true
+        appearance.canBack = web?.canGoBack() == true
+        appearance.bound = bound != null
         web?.visibility = View.VISIBLE
+        updateSampling()
+    }
+
+    private fun updateSampling() { glassSource.active(foreground && authorized && !appearance.gate && (appearance.toolbar || appearance.menu), appearance.menu) }
+
+    private fun menuAction(index: Int) {
+        appearance.menu = false
+        if (!foreground || !authorized || appearance.gate || !pageReady) return
+        val browser = web ?: return
+        val url = browser.url?.takeIf { OriginPolicy.normalize(it) == bound } ?: return
+        when (index) {
+            0 -> if (browser.canGoBack()) browser.goBack()
+            1 -> if (mainMethod == "GET") browser.reload() else formNotice()
+            2 -> bound?.let { home ->
+                if (url != home) { homeClearPending = true; browser.loadUrl(home) }
+                else appearance.toolbar = true
+            }
+            3 -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, "${browser.title.orEmpty()}\n$url")
+            }, "分享当前网页"))
+            4 -> try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)) }
+                catch (_: android.content.ActivityNotFoundException) { Toast.makeText(this, "没有可用的浏览器", Toast.LENGTH_SHORT).show() }
+            5 -> {
+                (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("当前网址", url))
+                Toast.makeText(this, "网址已复制", Toast.LENGTH_SHORT).show()
+            }
+            6 -> {
+                if (mainMethod != "GET" || browser.progress < 100) { formNotice(); return }
+                appearance.desktop = !appearance.desktop
+                bound?.let { preferences.edit().putBoolean("desktop:$it", appearance.desktop).apply() }
+                display?.configure(appearance.desktop)
+                browser.reload()
+            }
+        }
+    }
+
+    private fun formNotice() { android.app.AlertDialog.Builder(this).setMessage("此页面包含表单或仍在加载，请返回稳定页面后再操作。不会重新提交表单。").setPositiveButton("知道了", null).show() }
+
+    private fun restoreBrand(origin: String?) {
+        brandGeneration++
+        brandOrigin = origin
+        val cached = origin?.let(brands::cached)
+        appearance.title = cached?.first ?: origin?.let { Uri.parse(it).host } ?: "艾卡云"
+        appearance.icon = cached?.second
+        appearance.bound = bound != null
+    }
+
+    private fun applyAuthorizedBrand(origin: String, brand: SiteBrand?) {
+        if (brandOrigin != origin) restoreBrand(origin)
+        activeBrand = brand
+        discoveryDocument = -1L
+        brand?.name?.let { appearance.title = it }
+    }
+
+    private fun cacheBrand(origin: String) {
+        if (authorized && bound == origin && preferences.getString("origin", null) == origin && brandOrigin == origin) {
+            brands.save(origin, appearance.title, appearance.icon)
+        }
+    }
+
+    private fun refreshDocumentAppearance(view: WebView, token: Long, origin: String, document: Long) {
+        // Theme may follow each document; the site's name/icon may only come from its homepage.
+        view.evaluateJavascript("""(()=>({dark:document.documentElement.classList.contains('dark')||document.documentElement.dataset.theme==='dark',color:document.querySelector('meta[name="theme-color"]')?.content||'',name:document.querySelector('meta[property="og:site_name"]')?.content||document.querySelector('meta[name="application-name"]')?.content||document.title,icon:document.querySelector('link[rel~="icon"]')?.href||''}))()""") { json ->
+            if (token != viewId || web !== view || documentId != document || !authorized) return@evaluateJavascript
+            val value = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return@evaluateJavascript
+            val color = runCatching { Color.parseColor(value.optString("color")) }.getOrNull()
+            val dark = if (value.optBoolean("dark")) true else color?.let { androidx.core.graphics.ColorUtils.calculateLuminance(it) < 0.45 }
+            appearance.dark = dark
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                val light = !(dark ?: (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES))
+                isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light
+            }
+            if (view.url != origin || discoveryDocument == document) return@evaluateJavascript
+            discoveryDocument = document
+            if (siteType == "external" && activeBrand?.name.isNullOrBlank()) value.optString("name").trim().takeIf { it.length in 1..160 }?.let { appearance.title = it }
+            val iconUrl = activeBrand?.iconUrl ?: value.optString("icon").takeIf { it.isNotBlank() }
+            cacheBrand(origin)
+            if (iconUrl != null) {
+                val generation = ++brandGeneration
+                brandExecutor.submit {
+                    val icon = brands.icon(origin, iconUrl)
+                    handler.post {
+                        if (generation == brandGeneration && token == viewId && web === view && document == documentId && authorized && brandOrigin == origin) {
+                            if (icon != null) appearance.icon = icon
+                            cacheBrand(origin)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun unsupported() { Toast.makeText(this, "本阶段暂不支持此操作", Toast.LENGTH_SHORT).show() }
 
     private fun navigateBack() {
+        if (appearance.menu) { appearance.menu = false; updateSampling(); return }
         val browser = web
         if (authorized && gate.visibility != View.VISIBLE && browser != null && browser.canGoBack()) browser.goBack()
         else finish()
     }
-
-    // API 33+ uses the platform dispatcher registered in onCreate; older devices use this callback.
-    @SuppressLint("GestureBackNavigation")
-    @Deprecated("Legacy system back", ReplaceWith("navigateBack()"))
-    override fun onBackPressed() { navigateBack() }
 
     override fun onDestroy() {
         foreground = false
@@ -378,7 +609,23 @@ open class ShopActivity : Activity() {
         destroyWeb()
         handler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
+        brandExecutor.shutdownNow()
+        glassSource.close()
         super.onDestroy()
+    }
+
+    private fun isDark() = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+    private fun styleInput() {
+        input.setTextColor(if (isDark()) Color.WHITE else Color.rgb(24,35,55))
+        input.setHintTextColor(if (isDark()) Color.LTGRAY else Color.GRAY)
+        input.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(16).toFloat()
+            setColor(if (isDark()) Color.rgb(37,46,61) else Color.rgb(239,243,249))
+            setStroke(dp(1), if (isDark()) Color.rgb(65,77,98) else Color.rgb(222,229,240))
+        }
+        confirm.background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.rgb(48,103,232),Color.rgb(83,84,220))).apply { cornerRadius = dp(16).toFloat() }
+        confirm.setTextColor(Color.WHITE)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()

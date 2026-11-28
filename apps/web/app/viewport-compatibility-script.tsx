@@ -11,7 +11,32 @@ const SCRIPT = String.raw`
       return Number(match?.[1] || 0)
     }
 
+    function appDisplay() {
+      const state = window.__AIKAYUN_DISPLAY__
+      return state && state.version === 1 && state.origin === location.origin &&
+        typeof state.desktop === "boolean" && Number.isFinite(state.topBarDp) && state.topBarDp >= 0 && state.topBarDp <= 100 &&
+        Number.isFinite(state.containerWidthDp) && state.containerWidthDp > 0 ? state : null
+    }
+
     function reconcileViewport() {
+      const state = appDisplay()
+      const root = document.documentElement
+      if (state) {
+        root.dataset.aikayunShell = "1"
+        const width = Number(window.visualViewport?.width || window.innerWidth || state.containerWidthDp)
+        const gap = Number((state.topBarDp * width / state.containerWidthDp).toFixed(3)) + "px"
+        if (root.style.getPropertyValue("--aikayun-topbar-gap") !== gap) root.style.setProperty("--aikayun-topbar-gap", gap)
+        const content = state.desktop
+          ? "width=1280, initial-scale=" + Math.min(1, state.containerWidthDp / 1280) + ", viewport-fit=cover"
+          : "width=device-width, initial-scale=1, viewport-fit=cover"
+        const metas = Array.from(document.querySelectorAll('meta[name="viewport"]'))
+        const meta = metas[0] || document.head.appendChild(Object.assign(document.createElement("meta"), { name: "viewport" }))
+        for (const extra of metas.slice(1)) extra.remove()
+        if (meta.content !== content || metas.length > 1) meta.content = content
+        return
+      }
+      delete root.dataset.aikayunShell
+      root.style.removeProperty("--aikayun-topbar-gap")
       const viewports = Array.from(document.querySelectorAll('meta[name="viewport"]'))
       const screenWidth = Number(window.screen?.width || 0)
       const wide = viewports
@@ -60,6 +85,7 @@ const SCRIPT = String.raw`
       childList: true,
       subtree: true,
     })
+    window.addEventListener("aikayun:display", scheduleReconcile)
     window.addEventListener("resize", scheduleReconcile, { passive: true })
     window.addEventListener("pageshow", scheduleReconcile, { passive: true })
     window.visualViewport?.addEventListener("resize", scheduleReconcile, { passive: true })

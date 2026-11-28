@@ -17,6 +17,10 @@ if not keystore.is_file():
     sys.exit('Existing release JKS not found; no key will be generated.')
 env = os.environ.copy()
 env['ANDROID_HOME'] = str(sdk)
+# This release consumes Java 21 AARs; use a real JDK 21 for Gradle and signing tools.
+jdk = subprocess.check_output(['/usr/libexec/java_home', '-v', '21'], text=True).strip()
+env['JAVA_HOME'] = jdk
+env['PATH'] = jdk + '/bin:' + env.get('PATH', '')
 passwords = [env['MYSHOP_STORE_PASSWORD']] if env.get('MYSHOP_STORE_PASSWORD') else credential_file.read_text().splitlines()
 identity = None
 for password in passwords:
@@ -35,7 +39,10 @@ if identity is None:
 env['MYSHOP_KEY_PASSWORD'] = os.environ.get('MYSHOP_KEY_PASSWORD', env['MYSHOP_STORE_PASSWORD'])
 subprocess.run([str(root / 'gradlew'), '-p', str(root), ':app:assembleRelease', ':app:lintRelease', '--console=plain', *sys.argv[1:]], env=env, check=True)
 unsigned = root / 'app/build/outputs/apk/release/app-release-unsigned.apk'
-output = repo / 'dist/android/aikayun-1.0.1-1-base-release.apk'
+config = (root / 'app/build.gradle.kts').read_text()
+version_name = re.search(r'versionName\s*=\s*"([^"]+)"', config).group(1)
+version_code = re.search(r'versionCode\s*=\s*(\d+)', config).group(1)
+output = repo / f'dist/android/aikayun-{version_name}-{version_code}-shell-release.apk'
 output.parent.mkdir(parents=True, exist_ok=True)
 tools = sdk / 'build-tools/36.0.0'
 subprocess.run([str(tools / 'apksigner'), 'sign', '--ks', str(keystore), '--ks-type', 'JKS',
